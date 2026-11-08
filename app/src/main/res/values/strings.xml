@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">dshnc</string>
+    <string name="title">dsh-nodes node</string>
+    <string name="link_hint">Connection link from the admin panel</string>
+    <string name="connect">Connect</string>
+    <string name="status_disconnected">Not connected</string>
+</resources>
