@@ -1,4 +1,4 @@
-package dev.unera.dshnc
+package ru.uvw.dshnc
 
 import android.os.Bundle
 import android.widget.Button

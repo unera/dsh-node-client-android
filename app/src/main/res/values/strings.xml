@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Английский — основной: если локали нет, показываем его. -->
 <resources>
     <string name="app_name">dshnc</string>
     <string name="title">dsh-nodes node</string>
     <string name="link_hint">Connection link from the admin panel</string>
     <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
     <string name="status_disconnected">Not connected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected</string>
+    <string name="perm_title">Permissions</string>
+    <string name="perm_notifications">Notifications</string>
 </resources>

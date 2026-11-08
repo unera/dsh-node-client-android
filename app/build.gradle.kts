@@ -4,12 +4,12 @@ plugins {
 }
 
 android {
-    namespace = "dev.unera.dshnc"
+    namespace = "ru.uvw.dshnc"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "dev.unera.dshnc"
-        minSdk = 29
+        applicationId = "ru.uvw.dshnc"
+        minSdk = 33
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title">Узел dsh-nodes</string>
+    <string name="link_hint">Ссылка подключения из админки</string>
+    <string name="connect">Подключиться</string>
+    <string name="disconnect">Отключиться</string>
+    <string name="status_disconnected">Нет связи</string>
+    <string name="status_connecting">Соединяюсь…</string>
+    <string name="status_connected">Подключено</string>
+    <string name="perm_title">Разрешения</string>
+    <string name="perm_notifications">Уведомления</string>
+</resources>

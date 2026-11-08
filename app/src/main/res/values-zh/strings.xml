@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title">dsh-nodes 节点</string>
+    <string name="link_hint">来自管理面板的连接链接</string>
+    <string name="connect">连接</string>
+    <string name="disconnect">断开</string>
+    <string name="status_disconnected">未连接</string>
+    <string name="status_connecting">连接中…</string>
+    <string name="status_connected">已连接</string>
+    <string name="perm_title">权限</string>
+    <string name="perm_notifications">通知</string>
+</resources>
