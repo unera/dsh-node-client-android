@@ -26,6 +26,7 @@ import ru.uvw.dshnc.api.DeviceApi
 import ru.uvw.dshnc.api.NotificationsApi
 import ru.uvw.dshnc.api.Roots
 import ru.uvw.dshnc.api.SessionApi
+import ru.uvw.dshnc.api.ShellApi
 import ru.uvw.dshnc.api.TransferApi
 import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.store.TokenStore
@@ -137,11 +138,13 @@ class NodeService : Service() {
             .put(SessionApi.schema())
             .put(NotificationsApi(this).schema())
             .put(DeviceApi(this).schema())
+            .put(ShellApi(TokenStore(this).roots).schema())
         // список каталогов задаётся в настройках и живёт в состоянии узла
         val files = FilesApi(this, TokenStore(this).roots)
         val session = SessionApi(this)
         val notifications = NotificationsApi(this)
         val device = DeviceApi(this)
+        val shell = ShellApi(TokenStore(this).roots)
         val transfer = TransferApi(base, token)
         while (true) {
             try {
@@ -152,7 +155,7 @@ class NodeService : Service() {
                 val channel = Socket(
                     base = base,
                     token = token,
-                    onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications, device) }; channelRef?.waiting(known) } },
+                    onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications, device, shell) }; channelRef?.waiting(known) } },
                     onOpen = {
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
                         runCatching { notify(getString(R.string.status_connected)) }
@@ -195,7 +198,7 @@ class NodeService : Service() {
                 startPing(channel)
                 // ждём, пока канал жив; закрылся — уходим на новый круг и
                 // переподключаемся, иначе после рестарта сервера узел замолкает
-                waitForWork(channel, api, token, files, session, transfer, notifications, device)
+                waitForWork(channel, api, token, files, session, transfer, notifications, device, shell)
             } catch (error: Throwable) {
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message ?: error.javaClass.simpleName) }
                 runCatching { TokenStore(this@NodeService).connected = false }
@@ -250,16 +253,16 @@ class NodeService : Service() {
         }
     }
 
-    private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi) {
+    private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
         // Только по кадру сервера: опроса нет вовсе. Тишина в канале — норма,
         // а закрытие канала будит цикл мгновенно, чтобы переподключиться.
         while (storeConnected()) {
             kotlinx.coroutines.withTimeoutOrNull(60_000L) { closedSignal.receive() }
-            harvest(api, token, files, session, transfer, notifications, device)
+            harvest(api, token, files, session, transfer, notifications, device, shell)
         }
     }
 
-    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi) {
+    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
         while (true) {
             val answer = api.commands(token)
             // отметка жизни: экран покажет, что служба действительно работает
@@ -277,6 +280,7 @@ class NodeService : Service() {
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
                     method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args)
+                    method == "exec" -> shell.handle(method, args)
                     method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
                     method == "copyFromDevice" -> transfer.upload(command.optLong("seq"), args)
                     else -> files.handle(method, args)
