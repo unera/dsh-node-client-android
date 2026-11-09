@@ -78,7 +78,7 @@ class NodeApi(private val base: String) {
         call("POST", "/v1/commands/$seq/result", token, payload)
 
     companion object {
-        const val VERSION = "android-0.7.0"
+        const val VERSION = "android-0.7.1"
     }
 }
 

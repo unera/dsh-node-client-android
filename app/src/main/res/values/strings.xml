@@ -52,4 +52,6 @@
     <string name="menu_roots_no_picker">system folder picker is unavailable</string>
     <string name="menu_roots_unsupported">this directory cannot be mapped to a path</string>
     <string name="notif_stop">Turn off</string>
+    <string name="menu_overlay">Display over other apps</string>
+    <string name="menu_overlay_grant">Grant overlay permission</string>
 </resources>

@@ -64,6 +64,11 @@ class DeviceApi (private val context: Context) {
 
     /** Поставить будильник: без skipUi системные часы спросят человека. */
     private fun alarmSet (args: JSONObject): JSONObject {
+        // запуск чужого экрана из фона разрешён только с этим доступом,
+        // иначе система молча ничего не открывает
+        if (!android.provider.Settings.canDrawOverlays(context)) {
+            error("нужен доступ «поверх других приложений»: без него Android гасит запуск часов из фона")
+        }
         val hour = args.optInt("hour", -1)
         val minute = args.optInt("minute", -1)
         if (hour !in 0..23 || minute !in 0..59) error("нужны hour 0..23 и minute 0..59")

@@ -182,6 +182,17 @@ class SectionActivity : AppCompatActivity() {
             }
         })
         root.addView(block(getString(R.string.menu_roots), store.roots.joinToString("\n")))
+        root.addView(block(getString(R.string.menu_overlay),
+            if (android.provider.Settings.canDrawOverlays(this)) getString(R.string.menu_yes) else getString(R.string.menu_no)))
+        root.addView(Ui.button(this, getString(R.string.menu_overlay_grant)) {
+            try {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")),
+                )
+            } catch (error: Throwable) {
+                status.text = error.message ?: getString(R.string.menu_no)
+            }
+        })
         root.addView(Ui.button(this, getString(R.string.menu_roots_add)) { pickDirectory() })
         root.addView(Ui.button(this, getString(R.string.menu_roots_drop)) {
             store.roots = store.roots.dropLast(1)
