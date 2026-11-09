@@ -22,6 +22,7 @@ import ru.uvw.dshnc.CrashLog
 import ru.uvw.dshnc.R
 import ru.uvw.dshnc.api.FilesApi
 import ru.uvw.dshnc.api.NodeApi
+import ru.uvw.dshnc.api.DeviceApi
 import ru.uvw.dshnc.api.NotificationsApi
 import ru.uvw.dshnc.api.Roots
 import ru.uvw.dshnc.api.SessionApi
@@ -135,10 +136,12 @@ class NodeService : Service() {
             .put(FilesApi.schema(NodeApi.VERSION))
             .put(SessionApi.schema())
             .put(NotificationsApi(this).schema())
+            .put(DeviceApi(this).schema())
         // список каталогов задаётся в настройках и живёт в состоянии узла
         val files = FilesApi(this, TokenStore(this).roots)
         val session = SessionApi(this)
         val notifications = NotificationsApi(this)
+        val device = DeviceApi(this)
         val transfer = TransferApi(base, token)
         while (true) {
             try {
@@ -149,7 +152,7 @@ class NodeService : Service() {
                 val channel = Socket(
                     base = base,
                     token = token,
-                    onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications) }; channelRef?.waiting(known) } },
+                    onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications, device) }; channelRef?.waiting(known) } },
                     onOpen = {
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
                         runCatching { notify(getString(R.string.status_connected)) }
@@ -178,6 +181,9 @@ class NodeService : Service() {
                         }
                     },
                 )
+                // закрываем прошлое соединение, если оно ещё есть: два живых
+                // сокета дают «пинги ходят, а сервер считает офлайн»
+                runCatching { channelRef?.takeIf { it !== channel }?.close() }
                 channelRef = channel
                 channelOpen = false
                 val connNumber = TokenStore(this@NodeService).nextConnection()
@@ -189,7 +195,7 @@ class NodeService : Service() {
                 startPing(channel)
                 // ждём, пока канал жив; закрылся — уходим на новый круг и
                 // переподключаемся, иначе после рестарта сервера узел замолкает
-                waitForWork(channel, api, token, files, session, transfer, notifications)
+                waitForWork(channel, api, token, files, session, transfer, notifications, device)
             } catch (error: Throwable) {
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message ?: error.javaClass.simpleName) }
                 runCatching { TokenStore(this@NodeService).connected = false }
@@ -244,7 +250,7 @@ class NodeService : Service() {
         }
     }
 
-    private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi) {
+    private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi) {
         while (storeConnected()) {
             val fallback = TokenStore(this@NodeService).pollFallback
             if (fallback <= 0) {
@@ -254,12 +260,12 @@ class NodeService : Service() {
                 continue
             }
             delay(fallback * 1000L)
-            harvest(api, token, files, session, transfer, notifications)
+            harvest(api, token, files, session, transfer, notifications, device)
             socket.waiting(known)
         }
     }
 
-    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi) {
+    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi) {
         while (true) {
             val answer = api.commands(token)
             // отметка жизни: экран покажет, что служба действительно работает
@@ -276,6 +282,7 @@ class NodeService : Service() {
                 val outcome = when {
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
+                    method.startsWith("alarm_") -> device.handle(method, args)
                     method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
                     else -> files.handle(method, args)
                 }
