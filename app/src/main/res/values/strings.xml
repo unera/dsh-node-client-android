@@ -75,4 +75,7 @@
     <string name="roots_few">directories</string>
     <string name="roots_many">directories</string>
     <string name="roots_where">where the node may read and write</string>
+    <string name="menu_camera">Camera</string>
+    <string name="help_camera">needed for camera_snap</string>
+    <string name="help_camera_settings">if no dialog appeared: Settings → Apps → dshnc → Permissions → Camera</string>
 </resources>

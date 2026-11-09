@@ -16,6 +16,15 @@ import ru.uvw.dshnc.store.TokenStore
  * Экран одного раздела меню: заголовок с «назад» и строки этого раздела.
  */
 class SectionActivity : AppCompatActivity() {
+    /** Первый вход не должен пересобирать экран: иначе мигание при открытии. */
+    private var built = false
+
+    /** Результат запроса камеры: после ответа пересобираем экран. */
+    private val cameraRequest = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) recreate() else status.text = getString(R.string.help_camera_settings)
+    }
     /** Результат сканирования приходит сюда: содержимое QR — та же ссылка. */
     /** Выбор папки системным диалогом: путь приходит уже готовым. */
     private val picker = registerForActivityResult(
@@ -72,7 +81,7 @@ class SectionActivity : AppCompatActivity() {
             "apps" -> buildApps(pad)
             else -> buildNet(pad)
         }
-        setContentView(root)
+        setContentView(android.widget.ScrollView(this).apply { addView(root) })
     }
 
     private fun buildAuth (pad: Int) {
@@ -187,7 +196,8 @@ class SectionActivity : AppCompatActivity() {
         push(Ui.itemEx(
             this,
             getString(R.string.menu_fs_access),
-            "${getString(R.string.state_word)}: ${if (android.os.Environment.isExternalStorageManager()) getString(R.string.state_on) else getString(R.string.state_off)}",
+            stateLine(android.os.Environment.isExternalStorageManager()),
+            Ui.stateColor(android.os.Environment.isExternalStorageManager()),
             getString(R.string.help_all_files),
             { openAllFiles() },
         ))
@@ -195,7 +205,8 @@ class SectionActivity : AppCompatActivity() {
         push(Ui.itemEx(
             this,
             getString(R.string.menu_apps),
-            "${getString(R.string.state_word)}: ${getString(R.string.state_on)} · ${visibleApps()}",
+            "${stateLine(true)} · ${visibleApps()}",
+            Ui.stateColor(true),
             getString(R.string.help_apps),
             { open("apps") },
         ))
@@ -204,18 +215,40 @@ class SectionActivity : AppCompatActivity() {
             this,
             getString(R.string.menu_roots),
             dirsPhrase(store.roots.size),
+            Ui.stateColor(store.roots.isNotEmpty()),
             getString(R.string.help_roots),
             { open("roots") },
         ))
         push(Ui.divider(this))
         push(Ui.itemEx(
             this,
+            getString(R.string.menu_camera),
+            stateLine(checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED),
+            Ui.stateColor(checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED),
+            getString(R.string.help_camera),
+            { askCamera() },
+        ))
+        push(Ui.divider(this))
+        push(Ui.itemEx(
+            this,
             getString(R.string.menu_overlay),
-            "${getString(R.string.state_word)}: ${if (android.provider.Settings.canDrawOverlays(this)) getString(R.string.state_on) else getString(R.string.state_off)}",
+            stateLine(android.provider.Settings.canDrawOverlays(this)),
+            Ui.stateColor(android.provider.Settings.canDrawOverlays(this)),
             getString(R.string.help_overlay),
             { openOverlaySettings() },
         ))
     }
+
+    override fun onResume () {
+        super.onResume()
+        // доступы меняются в системных экранах: вернувшись, пересобираем список,
+        // иначе показываем устаревшее состояние
+        if (built) recreate() else built = true
+    }
+
+    /** Одна строка состояния: «состояние: включено» или «состояние: выключено». */
+    private fun stateLine (on: Boolean): String =
+        "${getString(R.string.state_word)}: ${getString(if (on) R.string.state_on else R.string.state_off)}"
 
     /** «указан 1 каталог» / «указано 2 каталога» / «указано 5 каталогов». */
     private fun dirsPhrase (count: Int): String {
@@ -238,6 +271,33 @@ class SectionActivity : AppCompatActivity() {
             } catch (inner: Throwable) {
                 status.text = inner.message ?: getString(R.string.menu_no)
             }
+        }
+    }
+
+    /**
+     * Камера: сначала системный диалог — это самое короткое путь к «разрешить».
+     * Если Android больше не показывает диалог (отказ с «не спрашивать»),
+     * открываем экран приложения, откуда видно разрешения.
+     */
+    private fun askCamera () {
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            openAppSettings()
+            return
+        }
+        val canAsk = shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)
+        cameraRequest.launch(android.Manifest.permission.CAMERA)
+        if (!canAsk) {
+            // диалог мог быть закрыт навсегда: подсказываем, где искать
+            status.text = getString(R.string.help_camera_settings)
+        }
+    }
+
+    /** Экран разрешений нашего приложения в системных настройках. */
+    private fun openAppSettings () {
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        } catch (error: Throwable) {
+            status.text = error.message ?: getString(R.string.menu_no)
         }
     }
 

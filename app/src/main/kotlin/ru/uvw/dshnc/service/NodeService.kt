@@ -251,17 +251,11 @@ class NodeService : Service() {
     }
 
     private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi) {
+        // Только по кадру сервера: опроса нет вовсе. Тишина в канале — норма,
+        // а закрытие канала будит цикл мгновенно, чтобы переподключиться.
         while (storeConnected()) {
-            val fallback = TokenStore(this@NodeService).pollFallback
-            if (fallback <= 0) {
-                // 0 — только по кадру: тишина в канале это норма, а не простой.
-                // Но закрытие канала — не тишина: просыпаемся сразу по сигналу.
-                kotlinx.coroutines.withTimeoutOrNull(60_000L) { closedSignal.receive() }
-                continue
-            }
-            delay(fallback * 1000L)
+            kotlinx.coroutines.withTimeoutOrNull(60_000L) { closedSignal.receive() }
             harvest(api, token, files, session, transfer, notifications, device)
-            socket.waiting(known)
         }
     }
 
@@ -282,8 +276,9 @@ class NodeService : Service() {
                 val outcome = when {
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
-                    method.startsWith("alarm_") || method == "apps" -> device.handle(method, args)
+                    method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args)
                     method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
+                    method == "copyFromDevice" -> transfer.upload(command.optLong("seq"), args)
                     else -> files.handle(method, args)
                 }
                 // `ok` — обязательное поле: по нему сервер решает, успех это или

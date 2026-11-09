@@ -83,7 +83,6 @@ class SessionApi(private val context: Context) {
             .put("roots", JSONArray(store.roots))
             .put("pingInterval", store.pingInterval)
             .put("pingFactor", store.pingFactor)
-            .put("pollFallback", store.pollFallback)
             .put("allFiles", android.os.Environment.isExternalStorageManager())
             .put("starts", store.starts)
             .put("events", org.json.JSONArray(store.events))

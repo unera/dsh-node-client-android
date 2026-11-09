@@ -105,7 +105,14 @@ object Ui {
      * пояснение. Пояснение не зависит от состояния — оно объясняет, зачем
      * пункт нужен, а не что сейчас включено.
      */
-    fun itemEx (activity: Activity, title: String, state: String, help: String, onClick: (() -> Unit)?): LinearLayout {
+    fun itemEx (
+        activity: Activity,
+        title: String,
+        state: String,
+        stateColor: Int,
+        help: String,
+        onClick: (() -> Unit)?,
+    ): LinearLayout {
         val density = activity.resources.displayMetrics.density
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -122,7 +129,7 @@ object Ui {
             addView(TextView(activity).apply {
                 text = state
                 textSize = 15f
-                setTextColor(if (onClick != null) Color.parseColor("#86efac") else Color.parseColor("#9ca3af"))
+                setTextColor(stateColor)
                 setPadding(0, (4 * density).toInt(), 0, 0)
             })
             if (help.isNotBlank()) {
@@ -135,6 +142,9 @@ object Ui {
             }
         }
     }
+
+    /** Цвет состояния: включено — зелёный, выключено — красный. */
+    fun stateColor (on: Boolean): Int = Color.parseColor(if (on) "#86efac" else "#f87171")
 
     /** Тонкая линия между пунктами. */
     fun divider (activity: Activity): View {

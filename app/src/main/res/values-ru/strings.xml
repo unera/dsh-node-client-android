@@ -73,4 +73,7 @@
     <string name="roots_few">каталога</string>
     <string name="roots_many">каталогов</string>
     <string name="roots_where">где узлу разрешено читать и писать</string>
+    <string name="menu_camera">Камера</string>
+    <string name="help_camera">нужна для снимка по команде (camera_snap)</string>
+    <string name="help_camera_settings">если диалог не появился: Настройки → Приложения → dshnc → Разрешения → Камера</string>
 </resources>

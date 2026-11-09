@@ -29,8 +29,8 @@ class FilesApi(private val context: Context, private val roots: List<String>) {
                 .put(method("write", "Write a text file", "path", "content"))
                 .put(method("edit", "Replace text in a file", "path", "old", "new"))
                 .put(method("mkdir", "Create a directory", "path", "name", "mode"))
-                .put(method("copyToDevice", "Copy a file from this node to the host", "path", "hostPath"))
-                .put(method("copyFromDevice", "Copy a file from the host to this node", "path", "hostPath"))
+                .put(method("copyToDevice", "Copy a file from the host to this node", "path", "hostPath"))
+                .put(method("copyFromDevice", "Copy a file from this node to the host", "path", "hostPath"))
                 .put(method("sha256", "File hash", "path")))
             .put("clientVersion", version)
 
