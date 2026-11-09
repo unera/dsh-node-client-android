@@ -19,6 +19,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val store = TokenStore(context)
         val base = store.base ?: return
         val token = store.token ?: return
+        // убираем уведомление сразу: второй раз эта кнопка всё равно не сработает
+        runCatching {
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
+                .cancel(notification.hashCode())
+        }
         val pending = goAsync()
         Thread {
             try {

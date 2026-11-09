@@ -51,6 +51,7 @@ class NotificationsApi (private val context: Context) {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(false)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 
         // каждая кнопка — отдельный приёмник: своё действие должно сработать
