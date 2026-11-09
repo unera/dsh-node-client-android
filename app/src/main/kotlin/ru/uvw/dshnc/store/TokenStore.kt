@@ -165,6 +165,30 @@ class TokenStore(private val context: Context) {
         events = events + (if (detail.isBlank()) "$stamp $kind" else "$stamp $kind: $detail")
     }
 
+    /**
+     * Номер нажатия: персистентный счётчик, а не uuid.
+     *
+     * По нему сервер отличает повтор одной и той же отправки от нового
+     * нажатия. Растёт всегда и переживает перезапуск приложения.
+     */
+    fun nextPress (): Long {
+        val value = (read("press")?.toLongOrNull() ?: 0L) + 1
+        write("press", value.toString())
+        return value
+    }
+
+    /**
+     * Номер соединения: увеличивается перед каждым подключением.
+     *
+     * Сервер по нему решает, какое соединение оставить. Без него два цикла на
+     * одном устройстве выбивают друг друга, и «онлайн» мигает.
+     */
+    fun nextConnection (): Long {
+        val value = (read("conn")?.toLongOrNull() ?: 0L) + 1
+        write("conn", value.toString())
+        return value
+    }
+
     /** Записать заморозку длиной в `ms`. */
     fun addFreeze (ms: Long) {
         if (ms < 1000) return

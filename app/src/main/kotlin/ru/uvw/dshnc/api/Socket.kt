@@ -28,7 +28,11 @@ class Socket(
     private val onPong: (Long) -> Unit = {},
 ) {
     private val client = OkHttpClient.Builder()
-        .pingInterval(0, TimeUnit.SECONDS)
+        // Пинг на уровне протокола: OkHttp сам шлёт кадры ping и рвёт
+        // соединение, если pong не пришёл. Без него мёртвый сокет считается
+        // живым, пока наш сторож не досчитает до двух растянутых интервалов —
+        // а это минуты, в которые узел числится подключённым и не отвечает.
+        .pingInterval(20, TimeUnit.SECONDS)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS)
         .build()
@@ -41,12 +45,12 @@ class Socket(
     /** Когда ушёл каждый пинг: по нему считаем задержку ответа. */
     private val sentAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    fun connect() {
+    fun connect (conn: Long? = null) {
         val url = base.replaceFirst("http", "ws").trimEnd('/') + "/v1/ws"
         val request = Request.Builder().url(url).header("sec-websocket-protocol", token).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send(JSONObject().put("t", "hello").put("proto", proto).put("known", JSONObject.NULL).toString())
+                webSocket.send(JSONObject().put("t", "hello").put("proto", proto).put("known", JSONObject.NULL).put("conn", conn ?: JSONObject.NULL).toString())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {

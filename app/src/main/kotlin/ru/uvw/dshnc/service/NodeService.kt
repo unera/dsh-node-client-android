@@ -42,6 +42,11 @@ class NodeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
     private var channelRef: Socket? = null
+    // сигнал «канал закрылся»: по нему цикл ожидания просыпается сразу, а не
+    // через минуту, иначе узел висит без связи до очередного тика
+    private val closedSignal = kotlinx.coroutines.channels.Channel<Unit>(
+        kotlinx.coroutines.channels.Channel.CONFLATED,
+    )
     private var pingJob: Job? = null
     private var freezeJob: Job? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
@@ -88,6 +93,11 @@ class NodeService : Service() {
         // служба уже работает и держит канал — повторный старт ничего не значит
         if (loop?.isActive == true) {
             runCatching { store.addEvent("start-повтор", "канал уже держится") }
+            // надпись не должна врать: второй запуск не открывает канал, но
+            // уведомление обязано показывать настоящее состояние первого
+            runCatching {
+                notify(getString(if (channelOpen) R.string.status_connected else R.string.status_connecting))
+            }
             return START_STICKY
         }
         // каждый старт службы — след: по нему видно, что процесс убивали
@@ -142,10 +152,13 @@ class NodeService : Service() {
                     onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications) }; channelRef?.waiting(known) } },
                     onOpen = {
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
+                        runCatching { notify(getString(R.string.status_connected)) }
                         channelOpen = true
                         runCatching { TokenStore(this@NodeService).connected = true }
                     },
                     onClose = {
+                        runCatching { notify(getString(R.string.status_connecting)) }
+                        runCatching { closedSignal.trySend(Unit) }
                         runCatching {
                             val state = TokenStore(this@NodeService)
                             val silence = if (state.lastPong > 0) System.currentTimeMillis() - state.lastPong else -1
@@ -167,7 +180,9 @@ class NodeService : Service() {
                 )
                 channelRef = channel
                 channelOpen = false
-                channel.connect()
+                val connNumber = TokenStore(this@NodeService).nextConnection()
+                runCatching { TokenStore(this@NodeService).addEvent("соединение", "№$connNumber") }
+                channel.connect(connNumber)
                 // ждём открытия: иначе цикл ожидания выйдет сразу
                 delay(500)
                 if (!channelOpen) delay(RECONNECT_MS)
@@ -233,8 +248,9 @@ class NodeService : Service() {
         while (storeConnected()) {
             val fallback = TokenStore(this@NodeService).pollFallback
             if (fallback <= 0) {
-                // 0 — только по кадру: тишина в канале это норма, а не простой
-                delay(60_000L)
+                // 0 — только по кадру: тишина в канале это норма, а не простой.
+                // Но закрытие канала — не тишина: просыпаемся сразу по сигналу.
+                kotlinx.coroutines.withTimeoutOrNull(60_000L) { closedSignal.receive() }
                 continue
             }
             delay(fallback * 1000L)
