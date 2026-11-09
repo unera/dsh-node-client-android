@@ -37,6 +37,14 @@
         <activity android:name=".SectionActivity" android:exported="false" />
 
         <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".service.StopReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".service.Heartbeat"
             android:exported="false" />
 

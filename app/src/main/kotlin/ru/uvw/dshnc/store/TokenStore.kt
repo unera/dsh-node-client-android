@@ -133,6 +133,44 @@ class TokenStore(private val context: Context) {
         get() = read("enabled") == "1"
         set(value) = write("enabled", if (value) "1" else null)
 
+
+    /** Сколько раз службу будили заново: видно, что процесс умирал. */
+    var starts: Int
+        get() = read("starts")?.toIntOrNull() ?: 0
+        set(value) = write("starts", value.toString())
+
+    /**
+     * Заморозки: система усыпила процесс, а потом разбудила.
+     *
+     * Храним последние записи, чтобы можно было ответить на вопрос «почему узел
+     * пропадал» фактами, а не догадками. Формат записи: `<когда>:<сколько мс>`.
+     */
+    var freezes: List<String>
+        get() = read("freezes")?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
+        set(value) = write("freezes", value.takeLast(10).joinToString(","))
+
+    /**
+     * Журнал событий узла: подключились, отключились, ошибка, ушли в фон.
+     *
+     * Храним последние записи — по ним видно, что именно случилось, вместо
+     * догадок «наверное, уснул» или «наверное, сеть».
+     */
+    var events: List<String>
+        get() = read("events")?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
+        set(value) = write("events", value.takeLast(60).joinToString("|"))
+
+    /** Записать событие: вид и короткая подробность. */
+    fun addEvent (kind: String, detail: String = "") {
+        val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        events = events + (if (detail.isBlank()) "$stamp $kind" else "$stamp $kind: $detail")
+    }
+
+    /** Записать заморозку длиной в `ms`. */
+    fun addFreeze (ms: Long) {
+        if (ms < 1000) return
+        freezes = freezes + "${System.currentTimeMillis()}:$ms"
+    }
+
     fun clear() {
         // адрес и личность устройства остаются: «забыть подключение» — это про
         // токен, а не про то, что телефон стал другим. Иначе на сервере плодятся

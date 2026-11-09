@@ -51,4 +51,5 @@
     <string name="menu_roots_drop">Remove last</string>
     <string name="menu_roots_no_picker">system folder picker is unavailable</string>
     <string name="menu_roots_unsupported">this directory cannot be mapped to a path</string>
+    <string name="notif_stop">Turn off</string>
 </resources>

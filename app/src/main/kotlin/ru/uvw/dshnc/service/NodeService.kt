@@ -22,6 +22,7 @@ import ru.uvw.dshnc.CrashLog
 import ru.uvw.dshnc.R
 import ru.uvw.dshnc.api.FilesApi
 import ru.uvw.dshnc.api.NodeApi
+import ru.uvw.dshnc.api.NotificationsApi
 import ru.uvw.dshnc.api.Roots
 import ru.uvw.dshnc.api.SessionApi
 import ru.uvw.dshnc.api.TransferApi
@@ -42,6 +43,7 @@ class NodeService : Service() {
     private var loop: Job? = null
     private var channelRef: Socket? = null
     private var pingJob: Job? = null
+    private var freezeJob: Job? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
     private var startedAt = 0L
@@ -83,6 +85,13 @@ class NodeService : Service() {
         }
         Heartbeat.schedule(this)
         val store = TokenStore(this)
+        // служба уже работает и держит канал — повторный старт ничего не значит
+        if (loop?.isActive == true) {
+            runCatching { store.addEvent("start-повтор", "канал уже держится") }
+            return START_STICKY
+        }
+        // каждый старт службы — след: по нему видно, что процесс убивали
+        store.starts = store.starts + 1
         // выключено человеком — никакой сети, даже если кто-то пытается поднять
         if (!store.enabled) {
             stopSelf()
@@ -115,9 +124,11 @@ class NodeService : Service() {
         val apis = JSONArray()
             .put(FilesApi.schema(NodeApi.VERSION))
             .put(SessionApi.schema())
+            .put(NotificationsApi(this).schema())
         // список каталогов задаётся в настройках и живёт в состоянии узла
         val files = FilesApi(this, TokenStore(this).roots)
         val session = SessionApi(this)
+        val notifications = NotificationsApi(this)
         val transfer = TransferApi(base, token)
         while (true) {
             try {
@@ -128,16 +139,25 @@ class NodeService : Service() {
                 val channel = Socket(
                     base = base,
                     token = token,
-                    onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer) }; channelRef?.waiting(known) } },
+                    onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications) }; channelRef?.waiting(known) } },
                     onOpen = {
+                        runCatching { TokenStore(this@NodeService).addEvent("open") }
                         channelOpen = true
                         runCatching { TokenStore(this@NodeService).connected = true }
                     },
                     onClose = {
+                        runCatching {
+                            val state = TokenStore(this@NodeService)
+                            val silence = if (state.lastPong > 0) System.currentTimeMillis() - state.lastPong else -1
+                            state.addEvent("close", if (silence >= 0) "тишина ${silence / 1000}с" else "тишина неизвестна")
+                        }
                         channelOpen = false
                         runCatching { TokenStore(this@NodeService).connected = false }
                     },
                     onPong = { rtt ->
+                        runCatching {
+                            TokenStore(this@NodeService).addEvent("pong", if (rtt > 0) "${rtt}мс" else "")
+                        }
                         runCatching {
                             val state = TokenStore(this@NodeService)
                             state.lastPong = System.currentTimeMillis()
@@ -154,8 +174,9 @@ class NodeService : Service() {
                 startPing(channel)
                 // ждём, пока канал жив; закрылся — уходим на новый круг и
                 // переподключаемся, иначе после рестарта сервера узел замолкает
-                waitForWork(channel, api, token, files, session, transfer)
+                waitForWork(channel, api, token, files, session, transfer, notifications)
             } catch (error: Throwable) {
+                runCatching { TokenStore(this@NodeService).addEvent("error", error.message ?: error.javaClass.simpleName) }
                 runCatching { TokenStore(this@NodeService).connected = false }
                 notify(error.message ?: getString(R.string.status_disconnected))
                 delay(RECONNECT_MS)
@@ -182,27 +203,33 @@ class NodeService : Service() {
             // который молчит по делу, выглядит мёртвым для сервера.
             var seq = 0
             var stretch = 1
+            var current = interval
             var answered = System.currentTimeMillis()
             val state = TokenStore(this@NodeService)
             while (true) {
-                delay(interval * 1000L * stretch)
-                // ответа нет дольше интервала с учётом растяжения — это разрыв,
-                // а не «медленно»: закрываем канал и переподключаемся сразу
+                delay(current * 1000L)
                 val silence = System.currentTimeMillis() - answered
-                if (silence > interval * 1000L * stretch * 2) {
+                // «канал мёртв» решает PingPolicy — тот же код, что покрыт тестами
+                if (ru.uvw.dshnc.logic.PingPolicy.isSilent(silence, interval, stretch)) {
                     channelOpen = false
                     socket.close()
                     return@launch
                 }
                 if (state.lastPong > answered) answered = state.lastPong
                 socket.ping(++seq)
-                val factor = store.pingFactor.coerceAtLeast(1)
-                if (stretch < factor) stretch += 1
+                // в журнал: номер пинга и пауза перед ним — по этой паузе и
+                // вычислим, на каком простое нас рвут снаружи
+                runCatching {
+                    TokenStore(this@NodeService).addEvent("ping", "#$seq пауза ${current}с")
+                }
+                val next = ru.uvw.dshnc.logic.PingPolicy.next(interval, store.pingFactor, stretch, false)
+                current = next.first
+                stretch = next.second
             }
         }
     }
 
-    private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi) {
+    private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi) {
         while (storeConnected()) {
             val fallback = TokenStore(this@NodeService).pollFallback
             if (fallback <= 0) {
@@ -211,12 +238,12 @@ class NodeService : Service() {
                 continue
             }
             delay(fallback * 1000L)
-            harvest(api, token, files, session, transfer)
+            harvest(api, token, files, session, transfer, notifications)
             socket.waiting(known)
         }
     }
 
-    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi) {
+    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi) {
         while (true) {
             val answer = api.commands(token)
             // отметка жизни: экран покажет, что служба действительно работает
@@ -232,6 +259,7 @@ class NodeService : Service() {
                 // именам: сервер присылает имя метода, а не «api.метод»
                 val outcome = when {
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
+                    method == "post" && args.has("id") -> notifications.handle(method, args)
                     method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
                     else -> files.handle(method, args)
                 }
@@ -289,11 +317,27 @@ class NodeService : Service() {
                 NotificationChannel(CHANNEL, getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW)
             )
         }
+        // заголовок — имя узла, под ним состояние; рядом кнопка выключения,
+        // чтобы не открывать приложение ради «выключить»
+        val name = TokenStore(this).name ?: getString(R.string.app_name)
+        val stop = android.app.PendingIntent.getBroadcast(
+            this,
+            1,
+            android.content.Intent(this, StopReceiver::class.java),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
         return Notification.Builder(this, CHANNEL)
-            .setContentTitle(getString(R.string.app_name))
+            .setContentTitle(name)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setOngoing(true)
+            .addAction(
+                android.app.Notification.Action.Builder(
+                    null,
+                    getString(R.string.notif_stop),
+                    stop,
+                ).build(),
+            )
             .build()
     }
 

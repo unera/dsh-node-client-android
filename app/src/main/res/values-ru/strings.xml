@@ -49,4 +49,5 @@
     <string name="menu_roots_drop">Убрать последний</string>
     <string name="menu_roots_no_picker">системный выбор папок недоступен</string>
     <string name="menu_roots_unsupported">этот каталог не удаётся превратить в путь</string>
+    <string name="notif_stop">Выключить</string>
 </resources>

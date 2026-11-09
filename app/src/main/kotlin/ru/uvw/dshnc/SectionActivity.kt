@@ -206,12 +206,13 @@ class SectionActivity : AppCompatActivity() {
 
     /** Подключение по ссылке: обмен кода на токен. */
     private fun connect (raw: String) {
-        val code = Regex("[?&]v=([^&]+)").find(raw)?.groupValues?.get(1)
-        val base = raw.substringBefore("/pair")
-        if (code == null || !base.startsWith("http")) {
+        val parsed = ru.uvw.dshnc.logic.LinkParser.parse(raw)
+        if (parsed == null) {
             status.text = getString(R.string.status_bad_link)
             return
         }
+        val base = parsed.base
+        val code = parsed.code
         status.text = getString(R.string.status_connecting)
         Thread {
             try {

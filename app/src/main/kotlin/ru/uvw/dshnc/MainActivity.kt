@@ -227,12 +227,13 @@ class MainActivity : AppCompatActivity() {
 
     /** Подключение по ссылке из админки: обмен кода на токен. */
     private fun pair (raw: String) {
-        val code = Regex("[?&]v=([^&]+)").find(raw)?.groupValues?.get(1)
-        val base = raw.substringBefore("/pair")
-        if (code == null || !base.startsWith("http")) {
+        val parsed = ru.uvw.dshnc.logic.LinkParser.parse(raw)
+        if (parsed == null) {
             status.text = getString(R.string.status_bad_link)
             return
         }
+        val base = parsed.base
+        val code = parsed.code
         status.text = getString(R.string.status_connecting)
         Thread {
             try {
@@ -267,6 +268,11 @@ class MainActivity : AppCompatActivity() {
         // подключились через меню — служба должна подняться без ручного тумблера
         if (store.enabled && store.token != null) NodeService.start(this)
         render()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        store.addEvent("app-фон")
     }
 
     override fun onDestroy() {

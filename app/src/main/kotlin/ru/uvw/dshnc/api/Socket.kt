@@ -76,11 +76,11 @@ class Socket(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                onClose(t.message ?: "не удалось соединиться")
+                onClose("сбой: ${t.message ?: t.javaClass.simpleName}")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                onClose(reason.ifBlank { "закрыт" })
+                onClose("код $code ${reason.ifBlank { "без причины" }}")
             }
         })
     }

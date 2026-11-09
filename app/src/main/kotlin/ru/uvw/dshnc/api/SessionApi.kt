@@ -85,6 +85,13 @@ class SessionApi(private val context: Context) {
             .put("pingFactor", store.pingFactor)
             .put("pollFallback", store.pollFallback)
             .put("allFiles", android.os.Environment.isExternalStorageManager())
+            .put("starts", store.starts)
+            .put("events", org.json.JSONArray(store.events))
+            .put("freezes", org.json.JSONArray(store.freezes.mapNotNull { entry ->
+                val parts = entry.split(":")
+                if (parts.size != 2) null
+                else org.json.JSONObject().put("at", parts[0].toLongOrNull() ?: 0L).put("ms", parts[1].toLongOrNull() ?: 0L)
+            }))
             .put("batteryUnrestricted",
                 (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
                     .isIgnoringBatteryOptimizations(context.packageName))

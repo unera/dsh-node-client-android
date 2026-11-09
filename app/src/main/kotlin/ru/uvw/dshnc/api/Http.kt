@@ -67,6 +67,10 @@ class NodeApi(private val base: String) {
             .put("allowEscalation", false)
     )
 
+    /** Событие устройства: нажатие кнопки, готовность, что угодно. */
+    fun sendEvent (token: String, body: JSONObject): JSONObject =
+        call("POST", "/v1/events", token = token, body = body)
+
     fun commands(token: String, limit: Int = 5): JSONObject =
         call("GET", "/v1/commands?limit=$limit", token)
 
@@ -74,7 +78,7 @@ class NodeApi(private val base: String) {
         call("POST", "/v1/commands/$seq/result", token, payload)
 
     companion object {
-        const val VERSION = "android-0.5.3"
+        const val VERSION = "android-0.6.1"
     }
 }
 
