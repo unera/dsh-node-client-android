@@ -3,3 +3,7 @@ build/
 local.properties
 *.iml
 .idea/
+
+# ключ подписи вне репозитория
+*.jks
+*.keystore
