@@ -54,4 +54,25 @@
     <string name="notif_stop">Turn off</string>
     <string name="menu_overlay">Display over other apps</string>
     <string name="menu_overlay_grant">Grant overlay permission</string>
+    <string name="menu_roots_none">no directories yet</string>
+    <string name="menu_overlay_state">Granted</string>
+    <string name="menu_overlay_why">Required for the alarm management subsystem to work correctly</string>
+    <string name="menu_overlay_restricted">If the toggle is unavailable: Settings → Apps → dshnc → ⋮ → Allow restricted settings</string>
+    <string name="menu_apps">App list</string>
+    <string name="menu_apps_visible">Apps visible</string>
+    <string name="menu_apps_why">Needed to find and launch apps on request</string>
+    <string name="menu_apps_note">The permission is fixed at install time and is not user-togglable: Android has no such setting</string>
+    <string name="help_all_files">needed to read and write files outside allowed directories</string>
+    <string name="help_apps">needed to find and launch apps on request</string>
+    <string name="help_roots">directories where the node may read and write</string>
+    <string name="help_overlay">required for the alarm management subsystem to work correctly</string>
+    <string name="menu_fs_access">File system access</string>
+    <string name="state_word">state</string>
+    <string name="state_on">on</string>
+    <string name="state_off">off</string>
+    <string name="roots_none_phrase">no directories yet</string>
+    <string name="roots_one">directory</string>
+    <string name="roots_few">directories</string>
+    <string name="roots_many">directories</string>
+    <string name="roots_where">where the node may read and write</string>
 </resources>

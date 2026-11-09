@@ -31,6 +31,8 @@ class DeviceApi (private val context: Context) {
                         .put("label", JSONObject().put("type", "string"))
                         .put("skipUi", JSONObject().put("type", "boolean")))
                     .put("required", JSONArray().put("hour").put("minute"))))
+            .put(method("apps", "Installed apps that can be launched (package and label)",
+                JSONObject().put("type", "object").put("properties", JSONObject())))
             .put(method("alarm_dismiss", "Ask the system clock to dismiss the next alarm",
                 JSONObject().put("type", "object").put("properties", JSONObject()))))
 
@@ -42,6 +44,7 @@ class DeviceApi (private val context: Context) {
 
     fun handle (method: String, args: JSONObject): JSONObject = try {
         when (method) {
+            "apps" -> apps()
             "alarm_next" -> alarmNext()
             "alarm_set" -> alarmSet(args)
             "alarm_dismiss" -> alarmDismiss()
@@ -49,6 +52,19 @@ class DeviceApi (private val context: Context) {
         }
     } catch (error: Throwable) {
         JSONObject().put("status", "error").put("message", error.message ?: error.javaClass.simpleName)
+    }
+
+    /** Что установлено и может быть запущено: пакет и человеческое имя. */
+    private fun apps (): JSONObject {
+        val manager = context.packageManager
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val list = org.json.JSONArray()
+        for (info in manager.queryIntentActivities(intent, 0)) {
+            list.put(JSONObject()
+                .put("package", info.activityInfo.packageName)
+                .put("label", info.loadLabel(manager).toString()))
+        }
+        return ok(JSONObject().put("count", list.length()).put("apps", list))
     }
 
     /** Ближайший будильник: время, метка и приложение, которое его поставило. */

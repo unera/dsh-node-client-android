@@ -282,7 +282,7 @@ class NodeService : Service() {
                 val outcome = when {
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
-                    method.startsWith("alarm_") -> device.handle(method, args)
+                    method.startsWith("alarm_") || method == "apps" -> device.handle(method, args)
                     method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
                     else -> files.handle(method, args)
                 }

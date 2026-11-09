@@ -52,4 +52,25 @@
     <string name="notif_stop">Выключить</string>
     <string name="menu_overlay">Поверх других приложений</string>
     <string name="menu_overlay_grant">Выдать доступ поверх приложений</string>
+    <string name="menu_roots_none">каталогов пока нет</string>
+    <string name="menu_overlay_state">Выдан</string>
+    <string name="menu_overlay_why">Требуется для корректной работы системы управления будильниками</string>
+    <string name="menu_overlay_restricted">Если переключатель недоступен: Настройки → Приложения → dshnc → ⋮ → «Разрешить ограниченные настройки»</string>
+    <string name="menu_apps">Список приложений</string>
+    <string name="menu_apps_visible">Видно приложений</string>
+    <string name="menu_apps_why">Нужно, чтобы находить и запускать приложения по команде</string>
+    <string name="menu_apps_note">Разрешение задаётся при установке и человеком не переключается: Android не даёт такого пункта в настройках</string>
+    <string name="help_all_files">нужно для чтения и записи файлов вне разрешённых каталогов</string>
+    <string name="help_apps">чтобы находить и запускать приложения по команде</string>
+    <string name="help_roots">каталоги, где узлу разрешено читать и писать</string>
+    <string name="help_overlay">требуется для корректной работы системы управления будильниками</string>
+    <string name="menu_fs_access">Доступ к файловой системе</string>
+    <string name="state_word">состояние</string>
+    <string name="state_on">включено</string>
+    <string name="state_off">выключено</string>
+    <string name="roots_none_phrase">каталоги не указаны</string>
+    <string name="roots_one">каталог</string>
+    <string name="roots_few">каталога</string>
+    <string name="roots_many">каталогов</string>
+    <string name="roots_where">где узлу разрешено читать и писать</string>
 </resources>

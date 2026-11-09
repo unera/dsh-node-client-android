@@ -18,6 +18,9 @@
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!-- без этого фоновый запуск экрана часов система молча гасит -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- без этого Android 11+ показывает только часть приложений, и найти
+         нужное по имени пакета не получится -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <!-- без этого Android 11+ не находит системные часы по интенту -->
     <queries>

@@ -100,6 +100,42 @@ object Ui {
         }
     }
 
+    /**
+     * Пункт в три строки: название, состояние отдельной строкой и постоянное
+     * пояснение. Пояснение не зависит от состояния — оно объясняет, зачем
+     * пункт нужен, а не что сейчас включено.
+     */
+    fun itemEx (activity: Activity, title: String, state: String, help: String, onClick: (() -> Unit)?): LinearLayout {
+        val density = activity.resources.displayMetrics.density
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((20 * density).toInt(), (12 * density).toInt(), (20 * density).toInt(), (12 * density).toInt())
+            if (onClick != null) {
+                isClickable = true
+                setOnClickListener { onClick() }
+            }
+            addView(TextView(activity).apply {
+                text = title
+                textSize = 18f
+                setTextColor(Color.WHITE)
+            })
+            addView(TextView(activity).apply {
+                text = state
+                textSize = 15f
+                setTextColor(if (onClick != null) Color.parseColor("#86efac") else Color.parseColor("#9ca3af"))
+                setPadding(0, (4 * density).toInt(), 0, 0)
+            })
+            if (help.isNotBlank()) {
+                addView(TextView(activity).apply {
+                    text = help
+                    textSize = 13f
+                    setTextColor(Color.parseColor("#8b8b8b"))
+                    setPadding(0, (6 * density).toInt(), 0, 0)
+                })
+            }
+        }
+    }
+
     /** Тонкая линия между пунктами. */
     fun divider (activity: Activity): View {
         val density = activity.resources.displayMetrics.density

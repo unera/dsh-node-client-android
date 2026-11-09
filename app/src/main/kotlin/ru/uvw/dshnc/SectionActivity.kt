@@ -50,6 +50,9 @@ class SectionActivity : AppCompatActivity() {
         val title = when (section) {
             "auth" -> getString(R.string.menu_auth)
             "android" -> getString(R.string.menu_android)
+            "roots" -> getString(R.string.menu_roots)
+            "apps" -> getString(R.string.menu_apps)
+            "overlay" -> getString(R.string.menu_overlay)
             else -> getString(R.string.menu_net)
         }
         // тот же экран и тот же стиль, что у меню: третий уровень не должен
@@ -65,6 +68,8 @@ class SectionActivity : AppCompatActivity() {
         when (section) {
             "auth" -> buildAuth(pad)
             "android" -> buildAndroid(pad)
+            "roots" -> buildRoots()
+            "apps" -> buildApps(pad)
             else -> buildNet(pad)
         }
         setContentView(root)
@@ -171,33 +176,119 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Список возможностей телефона.
+     *
+     * Каждый пункт: название, состояние и короткое объяснение зачем. Тап ведёт
+     * туда, где это меняется — в системный диалог либо на свой экран, если
+     * настройка состоит из нескольких частей.
+     */
     private fun buildAndroid (pad: Int) {
-        root.addView(row(getString(R.string.menu_all_files_state),
-            if (android.os.Environment.isExternalStorageManager()) getString(R.string.menu_yes) else getString(R.string.menu_no)))
-        root.addView(Ui.button(this, getString(R.string.menu_all_files)) {
+        push(Ui.itemEx(
+            this,
+            getString(R.string.menu_fs_access),
+            "${getString(R.string.state_word)}: ${if (android.os.Environment.isExternalStorageManager()) getString(R.string.state_on) else getString(R.string.state_off)}",
+            getString(R.string.help_all_files),
+            { openAllFiles() },
+        ))
+        push(Ui.divider(this))
+        push(Ui.itemEx(
+            this,
+            getString(R.string.menu_apps),
+            "${getString(R.string.state_word)}: ${getString(R.string.state_on)} · ${visibleApps()}",
+            getString(R.string.help_apps),
+            { open("apps") },
+        ))
+        push(Ui.divider(this))
+        push(Ui.itemEx(
+            this,
+            getString(R.string.menu_roots),
+            dirsPhrase(store.roots.size),
+            getString(R.string.help_roots),
+            { open("roots") },
+        ))
+        push(Ui.divider(this))
+        push(Ui.itemEx(
+            this,
+            getString(R.string.menu_overlay),
+            "${getString(R.string.state_word)}: ${if (android.provider.Settings.canDrawOverlays(this)) getString(R.string.state_on) else getString(R.string.state_off)}",
+            getString(R.string.help_overlay),
+            { openOverlaySettings() },
+        ))
+    }
+
+    /** «указан 1 каталог» / «указано 2 каталога» / «указано 5 каталогов». */
+    private fun dirsPhrase (count: Int): String {
+        if (count == 0) return getString(R.string.roots_none_phrase)
+        val word = when {
+            count % 10 == 1 && count % 100 != 11 -> getString(R.string.roots_one)
+            count % 10 in 2..4 && count % 100 !in 12..14 -> getString(R.string.roots_few)
+            else -> getString(R.string.roots_many)
+        }
+        return "$count $word ${getString(R.string.roots_where)}"
+    }
+
+    /** Системный экран «доступ ко всем файлам»: включить и выключить можно там же. */
+    private fun openAllFiles () {
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+        } catch (error: Throwable) {
             try {
-                startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
-            } catch (error: Throwable) {
-                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            } catch (inner: Throwable) {
+                status.text = inner.message ?: getString(R.string.menu_no)
             }
-        })
-        root.addView(block(getString(R.string.menu_roots), store.roots.joinToString("\n")))
-        root.addView(block(getString(R.string.menu_overlay),
-            if (android.provider.Settings.canDrawOverlays(this)) getString(R.string.menu_yes) else getString(R.string.menu_no)))
-        root.addView(Ui.button(this, getString(R.string.menu_overlay_grant)) {
-            try {
-                startActivity(
-                    Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")),
-                )
-            } catch (error: Throwable) {
-                status.text = error.message ?: getString(R.string.menu_no)
-            }
-        })
-        root.addView(Ui.button(this, getString(R.string.menu_roots_add)) { pickDirectory() })
-        root.addView(Ui.button(this, getString(R.string.menu_roots_drop)) {
+        }
+    }
+
+    /** Системный экран доступа «поверх других приложений»: своего экрана не надо. */
+    private fun openOverlaySettings () {
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+        } catch (error: Throwable) {
+            status.text = error.message ?: getString(R.string.menu_no)
+        }
+    }
+
+    /** Рабочие каталоги: добавление системным диалогом и список. */
+    private fun buildRoots () {
+        if (store.roots.isEmpty()) {
+            push(Ui.item(this, getString(R.string.menu_roots_none), null, null))
+        } else {
+            for (path in store.roots) push(Ui.item(this, path, null, null))
+        }
+        push(Ui.button(this, getString(R.string.menu_roots_add)) { pickDirectory() })
+        push(Ui.button(this, getString(R.string.menu_roots_drop)) {
             store.roots = store.roots.dropLast(1)
             recreate()
         })
+        push(status)
+    }
+
+    /** Сколько приложений видно прямо сейчас: без разрешения их заметно меньше. */
+    private fun visibleApps (): Int {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(intent, 0).size
+    }
+
+    /** Что именно видит узел: пакеты и названия. */
+    private fun buildApps (pad: Int) {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val items = packageManager.queryIntentActivities(intent, 0)
+        push(Ui.item(this, getString(R.string.menu_apps_visible), items.size.toString(), null))
+        push(Ui.item(this, getString(R.string.menu_apps_note), null, null))
+        for (info in items.take(60)) {
+            push(Ui.item(this, info.loadLabel(packageManager).toString(), info.activityInfo.packageName, null))
+        }
+        push(status)
+    }
+
+    private fun push (view: android.view.View) {
+        root.addView(view)
+    }
+
+    private fun open (key: String) {
+        startActivity(Intent(this, SectionActivity::class.java).putExtra("section", key))
     }
 
     private fun buildNet (pad: Int) {
