@@ -1,6 +1,7 @@
 package ru.uvw.dshnc.api
 
 import android.app.NotificationChannel
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -202,7 +203,10 @@ object DialogHub {
             .setOngoing(true)
             .setAutoCancel(false)
             .setContentIntent(openIntent)
-        if (fullScreenAllowed(context)) builder.setFullScreenIntent(openIntent, true)
+        // a full-screen intent only when the phone is in the person's hands: on the lock
+        // screen a question must stay a notification, otherwise a pocket answers for them
+        val keyguard = (context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
+        if (!keyguard && fullScreenAllowed(context)) builder.setFullScreenIntent(openIntent, true)
         pending.request.buttons.forEachIndexed { index, button ->
             val label = if (button.icon.isBlank()) button.title else "${button.icon} ${button.title}"
             val press = PendingIntent.getBroadcast(

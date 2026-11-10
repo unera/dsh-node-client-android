@@ -37,19 +37,9 @@ class AskActivity : AppCompatActivity() {
 
     override fun onCreate (state: Bundle?) {
         super.onCreate(state)
-        // A question has to reach a locked phone: without these two the window is simply
-        // not shown over the keyguard, and the person sees nothing at all until they
-        // unlock — which is exactly what happened on the first live check.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window?.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
-            )
-        }
+        // Never over the keyguard: a phone in a pocket must not answer a question by
+        // accident. A locked phone gets a plain notification; the window waits for the
+        // person to unlock it.
         window?.setBackgroundDrawableResource(android.R.color.transparent)
         bind(intent.getLongExtra(EXTRA_SEQ, -1L))
     }
