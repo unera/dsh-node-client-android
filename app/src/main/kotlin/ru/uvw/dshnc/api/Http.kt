@@ -132,7 +132,7 @@ class NodeApi(private val base: String) {
         call("POST", "/v1/commands/$seq/result", token, payload)
 
     companion object {
-        const val VERSION = "android-0.9.7"
+        const val VERSION = "android-0.9.8"
 
         /** The platform this client runs on: the server shows it in the panel. */
         const val PLATFORM = "android"

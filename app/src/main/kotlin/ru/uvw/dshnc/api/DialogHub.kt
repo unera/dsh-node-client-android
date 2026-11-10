@@ -245,8 +245,10 @@ object DialogHub {
      * so there it tints the icon and the title — that is the only thing the platform offers.
      */
     fun styleColor (style: DialogStyle): Int = when (style) {
-        DialogStyle.WARNING -> 0xFF1D4ED8.toInt()
-        DialogStyle.DANGER -> 0xFFB91C1C.toInt()
-        DialogStyle.NORMAL -> 0xFF374151.toInt()
+        // the card is deliberately dark: the buttons on it are light, and white text on a
+        // light card would be unreadable
+        DialogStyle.WARNING -> 0xFF1E3A8A.toInt()
+        DialogStyle.DANGER -> 0xFF7F1D1D.toInt()
+        DialogStyle.NORMAL -> 0xFF1F2937.toInt()
     }
 }

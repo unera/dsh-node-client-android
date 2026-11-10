@@ -155,13 +155,13 @@ class AskActivity : AppCompatActivity() {
                 isAllCaps = false
                 minHeight = dp(52)
                 setPadding(dp(16), dp(12), dp(16), dp(12))
-                setTextColor(Color.WHITE)
-                // a button is filled by its own style; the light border keeps it readable
-                // on a card of the same family of colours
+                setTextColor(buttonInk)
+                // a button is filled by its own style; a dark border separates it from the
+                // card, and the dark label keeps the contrast on a light fill
                 background = GradientDrawable().apply {
                     setColor(styleFill(button.style))
                     cornerRadius = dp(12).toFloat()
-                    setStroke(dp(1), Color.parseColor("#66ffffff"))
+                    setStroke(dp(1), Color.parseColor("#33000000"))
                 }
                 setOnClickListener { press(index) }
                 layoutParams = LinearLayout.LayoutParams(
@@ -182,11 +182,15 @@ class AskActivity : AppCompatActivity() {
     }
 
     /** The button fill by its style: grey, blue or red, the same set the card uses. */
+    /** Buttons are light against the dark card, so their labels are dark, not white. */
     private fun styleFill (style: DialogStyle): Int = when (style) {
-        DialogStyle.WARNING -> Color.parseColor("#2563eb")
-        DialogStyle.DANGER -> Color.parseColor("#dc2626")
-        DialogStyle.NORMAL -> Color.parseColor("#4b5563")
+        DialogStyle.WARNING -> Color.parseColor("#93c5fd")
+        DialogStyle.DANGER -> Color.parseColor("#fca5a5")
+        DialogStyle.NORMAL -> Color.parseColor("#d1d5db")
     }
+
+    /** Dark ink for the light buttons: white on #93c5fd is unreadable. */
+    private val buttonInk = Color.parseColor("#111827")
 
     /** A scroll view that never grows past its cap: the buttons stay where a thumb expects them. */
     private class CappedScroll (context: Context, private val maxPx: Int) : ScrollView(context) {
