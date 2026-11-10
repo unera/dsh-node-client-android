@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Dshnc" parent="Theme.AppCompat.DayNight.NoActionBar" />
+
+    <!-- the question window: transparent, dimmed behind, and nothing of the usual chrome -->
+    <style name="Theme.Dshnc.Dialog" parent="Theme.Dshnc">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

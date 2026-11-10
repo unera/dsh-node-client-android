@@ -59,7 +59,7 @@ class ShellApi (private val roots: List<String>) {
         if (!allowed(cwd)) return err("path_denied", "каталог $cwd вне разрешённых: ${roots.joinToString(", ")}")
         // like on the desktop: `timeoutMs`, then `timeout` in seconds from the arguments,
         // then the `timeout` the server set for the command, then our own default
-        val timeout = (Timeouts.resolveMs(args, commandSeconds) ?: DEFAULT_TIMEOUT_MS)
+        val timeout = (Timeouts.resolveMs(args, commandSeconds) ?: Timeouts.DEFAULT_MS)
             .coerceIn(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
         val started = System.currentTimeMillis()
         return try {
@@ -206,8 +206,6 @@ class ShellApi (private val roots: List<String>) {
     companion object {
         private const val LIMIT = 64 * 1024
         private const val ERR_LIMIT = 16 * 1024
-        /** The pause of `exec` when neither the arguments nor the server named one. */
-        private const val DEFAULT_TIMEOUT_MS = 15_000
         private const val MIN_TIMEOUT_MS = 1_000
         private const val MAX_TIMEOUT_MS = 120_000
         /** How long a cancelled process is given to die on SIGTERM. */

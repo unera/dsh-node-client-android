@@ -24,6 +24,7 @@ import ru.uvw.dshnc.api.ApiException
 import ru.uvw.dshnc.api.FilesApi
 import ru.uvw.dshnc.api.NodeApi
 import ru.uvw.dshnc.api.DeviceApi
+import ru.uvw.dshnc.api.DialogApi
 import ru.uvw.dshnc.api.NotificationsApi
 import ru.uvw.dshnc.api.Roots
 import ru.uvw.dshnc.api.SessionApi
@@ -68,6 +69,8 @@ class NodeService : Service() {
      * its queue has spent, not what this process did.
      */
     @Volatile private var maxCommandno: Long = 0L
+    /** The `dialog.ask` dispatcher: its state lives in `DialogHub`, this is only the door. */
+    private val dialog by lazy { DialogApi(this) }
     /** The server generation we know; null — we know none and the next announce says so. */
     @Volatile private var epoch: Long? = null
     /** The persistent connection counter, bumped by every announce. */
@@ -159,6 +162,7 @@ class NodeService : Service() {
             .put(FilesApi.schema(NodeApi.VERSION))
             .put(SessionApi.schema())
             .put(NotificationsApi(this).schema())
+            .put(dialog.schema())
             .put(DeviceApi(this).schema())
             .put(ShellApi(TokenStore(this).roots).schema())
         // the list of directories is set in the settings and lives in the node state
@@ -443,8 +447,13 @@ class NodeService : Service() {
             // with `#`, are handled by the client itself and must not fall through to
             // `files`
             val outcome = when {
-                method.startsWith("#") -> shell.control(method, args)
+                // the dialog answers for a cancel that has its number; anything else is the
+                // shell registry's business
+                method.startsWith("#") -> dialog.control(method, args) ?: shell.control(method, args)
                 method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
+                method == "ask" -> dialog.handle(method, args, seq, commandSeconds) { answer ->
+                    submitResult(api, token, seq, answer)
+                }
                 method == "post" && args.has("id") -> notifications.handle(method, args)
                 method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args, commandSeconds)
                 method == "exec" -> shell.handle(method, args, seq, commandSeconds)
@@ -452,34 +461,47 @@ class NodeService : Service() {
                 method == "copyFromDevice" -> transfer.upload(seq, args, commandSeconds)
                 else -> files.handle(method, args)
             }
-            // `ok` is a mandatory field: the server decides from it whether this is a
-            // success or a rejection. Without it any command looked like "internal error".
-            val payload = if (outcome.optString("status") == "ok") {
-                JSONObject()
-                    .put("ok", true)
-                    .put("status", "ok")
-                    .put("results", JSONArray().put(JSONObject()
-                        .put("type", "text")
-                        .put("text", outcome.optJSONObject("payload").toString())))
-            } else {
-                JSONObject()
-                    .put("ok", false)
-                    .put("status", "error")
-                    .put("code", outcome.optString("code"))
-                    .put("message", outcome.optString("message"))
-            }
-            // our own clock in the envelope: the server's `timing` rule computes
-            // durationMs and clockSkewMs from it — without `now` its `nodeNow` is null
-            // and the rule is half-blind
-            payload.put("now", System.currentTimeMillis())
-            api.result(token, seq, payload)
-            executed.incrementAndGet()
-            // our own work only: the number grows by what this process really executed, and
-            // the server's `max_commandno` is never adopted — that adoption was the deleted
-            // cursor
-            maxCommandno = maxOf(maxCommandno, seq)
+            // a dialog is answered by the person, not by this loop: the answer arrives from
+            // the thread that waits for it, through the same `submitResult` — so the loop
+            // stays free and the server's cancel can still reach us
+            if (outcome.optString("status") == DialogApi.PENDING) continue
+            submitResult(api, token, seq, outcome)
         }
         // the batch is over: from here we wait for a frame instead of spinning the loop
+    }
+
+    /**
+     * Reply to one command.
+     *
+     * One place for both paths: the batch loop and the thread that waits for a person's
+     * answer. `ok` is a mandatory field — the server decides from it whether this is a
+     * success or a rejection, and without it any command looked like "internal error".
+     */
+    private fun submitResult (api: NodeApi, token: String, seq: Long, outcome: JSONObject) {
+        val payload = if (outcome.optString("status") == "ok") {
+            JSONObject()
+                .put("ok", true)
+                .put("status", "ok")
+                .put("results", JSONArray().put(JSONObject()
+                    .put("type", "text")
+                    .put("text", outcome.optJSONObject("payload").toString())))
+        } else {
+            JSONObject()
+                .put("ok", false)
+                .put("status", "error")
+                .put("code", outcome.optString("code"))
+                .put("message", outcome.optString("message"))
+        }
+        // our own clock in the envelope: the server's `timing` rule computes
+        // durationMs and clockSkewMs from it — without `now` its `nodeNow` is null
+        // and the rule is half-blind
+        payload.put("now", System.currentTimeMillis())
+        api.result(token, seq, payload)
+        executed.incrementAndGet()
+        // our own work only: the number grows by what this process really executed, and
+        // the server's `max_commandno` is never adopted — that adoption was the deleted
+        // cursor
+        synchronized(this) { maxCommandno = maxOf(maxCommandno, seq) }
     }
 
     /** The generation of the server process that answered — if it named one. */

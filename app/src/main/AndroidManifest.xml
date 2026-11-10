@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- a question has to reach a locked screen; since Android 14 the system decides -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
@@ -52,6 +54,29 @@
         <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".MenuActivity" android:exported="false" />
         <activity android:name=".SectionActivity" android:exported="false" />
+
+        <!-- the dialog.ask question: a window of its own, transparent, no history,
+             out of the recent list — it is a question, not a screen of the app -->
+        <activity
+            android:name=".AskActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Dshnc.Dialog"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- more than one open question: one list instead of windows on top of each other -->
+        <activity
+            android:name=".DialogListActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Dshnc.Dialog" />
+
+        <receiver
+            android:name=".AskPressReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".NotificationActionReceiver"
