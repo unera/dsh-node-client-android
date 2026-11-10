@@ -197,6 +197,9 @@ object DialogHub {
             .setColor(styleColor(pending.request.style))
             .setStyle(NotificationCompat.BigTextStyle().bigText(pending.request.content))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // the question itself is the point: on a lock screen it must be readable, not
+            // hidden behind "content hidden" — the phone is locked, the person is the owner
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             // the question is alive until the server cancels it or its command times out:
             // removing the notification would only hide the way back to it
