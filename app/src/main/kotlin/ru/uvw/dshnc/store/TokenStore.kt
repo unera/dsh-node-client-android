@@ -146,6 +146,21 @@ class TokenStore(private val context: Context) {
         get() = read("enabled") == "1"
         set(value) = write("enabled", if (value) "1" else null)
 
+    /**
+     * A newer instance of this node took the channel (`4001 replaced`) and this one stopped.
+     *
+     * The flag exists because stopping is not enough: the ten-minute alarm used to bring the
+     * service back, the revived instance announced a bigger `client_epoch`, pushed out the
+     * instance that had replaced it — and that one's own alarm revived it in turn. Two
+     * instances, ping-ponging every ten minutes, each sure it is the real one.
+     *
+     * Persisted, and cleared only by a person turning the node on: a press is intent, a timer
+     * is not.
+     */
+    var replaced: Boolean
+        get() = read("replaced") == "1"
+        set(value) = write("replaced", if (value) "1" else null)
+
 
     /** How many times the service was woken from scratch: shows that the process died. */
     var starts: Int

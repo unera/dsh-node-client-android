@@ -146,6 +146,11 @@ class MainActivity : AppCompatActivity() {
     private fun applyEnabled (on: Boolean) {
         store.enabled = on
         if (on) {
+            // a press on "on" is the one intent that revives a displaced node: the flag is
+            // cleared here and nowhere else, because a timer waking the node up is not a
+            // person — that is exactly how two instances ended up ping-ponging every ten
+            // minutes, each reviving the one the other had displaced
+            store.replaced = false
             if (store.token != null) NodeService.start(this) else linkRow.visibility = View.VISIBLE
         } else {
             NodeService.stop(this)
@@ -244,6 +249,9 @@ class MainActivity : AppCompatActivity() {
                 store.token = token
                 store.name = deviceName()
                 store.enabled = true
+                // a fresh pairing is a person connecting this node: the old "displaced" mark
+                // belongs to a previous life and would otherwise keep the new token silent
+                store.replaced = false
                 runOnUiThread {
                     linkRow.visibility = View.GONE
                     NodeService.start(this)
