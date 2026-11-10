@@ -276,6 +276,20 @@ class NodeService : Service() {
     }
 
     private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
+        // The restart declaration has to reach the server BEFORE the first command is
+        // taken: otherwise the server hands out `exec` and the `known: null` that arrives a
+        // moment later closes it as `node_restarted` — the very illness the declaration is
+        // about, done by the node's own hand. The wait is bounded and happens only while a
+        // live channel still owes the declaration: a socket that did not come up must not
+        // hold the node, it will pick work up on its own wake.
+        val channel = channelRef
+        if (channel != null && !channel.announced()) {
+            val deadline = System.currentTimeMillis() + DECLARATION_WAIT_MS
+            while (!channel.announced() && System.currentTimeMillis() < deadline) delay(20)
+            if (!channel.announced()) {
+                runCatching { TokenStore(this@NodeService).addEvent("декларация", "не ушла за ${DECLARATION_WAIT_MS}мс") }
+            }
+        }
         while (true) {
             val answer = api.commands(token)
             // the liveness mark: the screen will show that the service really works
@@ -462,6 +476,8 @@ class NodeService : Service() {
         /** A fallback queue check, in case the frame did not come. */
         private const val POLL_FALLBACK_MS = 30_000L
         private const val RECONNECT_MS = 5000L
+        /** How long the first work waits for the restart declaration to go out. */
+        private const val DECLARATION_WAIT_MS = 1000L
 
         /** How long the node has been running — needed by the `session.ping` method. */
         fun uptime(): Long = instance?.uptimeSeconds() ?: 0L

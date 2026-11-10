@@ -53,18 +53,6 @@ class Socket(
 
     private var socket: WebSocket? = null
 
-    /**
-     * Whether this process still owes the server the "I restarted" frame.
-     *
-     * `known: null` means for the server "everything you issued to me died with the
-     * process": it closes those commands as `node_restarted`. Said once — while it is
-     * repeated in every frame, the batch that has just been handed out is closed too,
-     * and a live command dies a hundred milliseconds after it was issued. The flag is
-     * per process, not per connection: a reconnect keeps the same process and the same
-     * running commands.
-     */
-    private var fresh = !restartDeclared.get()
-
     /** Time of the last answer to a ping: the channel is alive regardless of commands. */
     @Volatile var lastPong: Long = 0L
 
@@ -74,7 +62,6 @@ class Socket(
     fun connect (conn: Long? = null, known: Long = 0L) {
         val url = base.replaceFirst("http", "ws").trimEnd('/') + "/v1/ws"
         val request = Request.Builder().url(url).header("sec-websocket-protocol", token).build()
-        val cursor = if (fresh) JSONObject.NULL else known
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 // The hello carries the same fields as `announce`: the server updates the
@@ -83,7 +70,7 @@ class Socket(
                 val hello = JSONObject()
                     .put("t", "hello")
                     .put("proto", proto)
-                    .put("known", cursor)
+                    .put("known", declaration.hello(known) ?: JSONObject.NULL)
                     .put("conn", conn ?: JSONObject.NULL)
                     .put("epoch", epoch ?: JSONObject.NULL)
                     .put("workdir", workdir ?: JSONObject.NULL)
@@ -92,11 +79,6 @@ class Socket(
                     .put("approver", approver)
                     .put("base", startMode)
                     .put("uptimeSeconds", uptimeSeconds())
-                // `null` in `known` is said by the hello frame only: it means "everything
-                // you issued to me died with the process". Any later frame carries the
-                // cursor, otherwise a live batch would be closed right after being issued.
-                fresh = false
-                restartDeclared.set(true)
                 webSocket.send(hello.toString())
             }
 
@@ -109,8 +91,11 @@ class Socket(
                 when (frame.optString("t")) {
                     "hello-ok" -> {
                         // we declare our wait right away: without it the server has no right
-                        // to send the frame, even if there is already work
-                        webSocket.send(JSONObject().put("t", "check_state").put("known", known).toString())
+                        // to send the frame, even if there is already work. This frame is
+                        // the one the server reads the restart from, so the very first
+                        // `check_state` of a fresh process carries `known: null`
+                        val cursor = declaration.checkState(known)
+                        webSocket.send(JSONObject().put("t", "check_state").put("known", cursor ?: JSONObject.NULL).toString())
                         // the server keeps its generation: a different one means it restarted
                         // while we were away, and the epoch the node remembers is stale
                         if (frame.optBoolean("reconnect", false)) onReconnect(frame.optLong("epoch", 0L))
@@ -139,24 +124,37 @@ class Socket(
         })
     }
 
-    /** Tell the server "I am waiting again" after a batch is processed. */
+    /**
+     * Tell the server "I am waiting again" after a batch is processed.
+     *
+     * While the restart declaration is still owed, this frame carries it — the same rule
+     * as on the desktop: the declaration must not be lost because a wait frame happened to
+     * come first.
+     */
     fun waiting(known: Long?) {
-        socket?.send(JSONObject().put("t", "check_state").put("known", known ?: JSONObject.NULL).toString())
+        // nothing to send on: the declaration must not be spent, the next hello carries it
+        val target = socket ?: return
+        val value = if (declaration.announced()) known else declaration.checkState(known ?: 0L)
+        target.send(JSONObject().put("t", "check_state").put("known", value ?: JSONObject.NULL).toString())
     }
+
+    /** Whether the one-shot declaration has already gone out: the first command waits for it. */
+    fun announced(): Boolean = declaration.announced()
 
     /**
      * Say "I restarted" again — used when the server generation changed, not on an
      * ordinary start.
      *
      * Everything the old generation had already handed out died together with it, and
-     * leaving those commands in `processing` until the timeout is a lie. The flag is
-     * raised too: if this connection drops before the server hears us, the next hello
-     * repeats the declaration.
+     * leaving those commands in `processing` until the timeout is a lie. Said once, in one
+     * frame: if this connection drops before the server hears us, the declaration is still
+     * owed and the next connection repeats it in its hello.
      */
     fun declareRestart() {
-        fresh = true
-        restartDeclared.set(false)
-        socket?.send(JSONObject().put("t", "check_state").put("known", JSONObject.NULL).toString())
+        declaration.restart()
+        val target = socket ?: return
+        val value = declaration.checkState(0L)
+        target.send(JSONObject().put("t", "check_state").put("known", value ?: JSONObject.NULL).toString())
     }
 
     fun ping(id: Int) {
@@ -170,7 +168,10 @@ class Socket(
     }
 
     companion object {
-        /** Set once the process has declared its restart: a reconnect must not repeat it. */
-        private val restartDeclared = java.util.concurrent.atomic.AtomicBoolean(false)
+        /**
+         * The declaration lives in the process, not in a connection: a reconnect keeps the
+         * same process and the same running commands.
+         */
+        private val declaration = ru.uvw.dshnc.logic.Declaration()
     }
 }
