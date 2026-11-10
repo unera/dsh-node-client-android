@@ -8,12 +8,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Будильники устройства.
+ * Device alarms.
  *
- * Что доступно обычному приложению: узнать ближайший будильник и попросить
- * системные часы поставить или снять будильник. Полный список будильников
- * человека прочитать нельзя — такого публичного API нет, и делать вид, что он
- * есть, мы не будем.
+ * What an ordinary app can do: find out the next alarm and ask the system clock to set
+ * or dismiss an alarm. The person's full list of alarms cannot be read — no such public
+ * API exists, and we will not pretend that it does.
  */
 class DeviceApi (private val context: Context) {
     fun schema (): JSONObject = JSONObject()
@@ -77,7 +76,7 @@ class DeviceApi (private val context: Context) {
         JSONObject().put("status", "error").put("message", error.message ?: error.javaClass.simpleName)
     }
 
-    /** Состояние сейчас: батарея, зарядка, сеть, экран, время работы. */
+    /** The state right now: battery, charging, network, screen, uptime. */
     private fun deviceStatus (): JSONObject {
         val battery = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
         val level = battery?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -104,7 +103,7 @@ class DeviceApi (private val context: Context) {
             .put("uptimeSeconds", android.os.SystemClock.elapsedRealtime() / 1000))
     }
 
-    /** Кто это: модель, версия Android, язык, экран. */
+    /** Who this is: model, Android version, language, screen. */
     private fun deviceInfo (): JSONObject {
         val metrics = context.resources.displayMetrics
         return ok(JSONObject()
@@ -119,7 +118,7 @@ class DeviceApi (private val context: Context) {
             .put("density", metrics.densityDpi))
     }
 
-    /** Сколько места и памяти осталось: без этого «устройство тормозит» не объяснить. */
+    /** How much space and memory is left: without it "the device is lagging" cannot be explained. */
     private fun deviceHealth (): JSONObject {
         val data = android.os.Environment.getDataDirectory()
         val stat = android.os.StatFs(data.path)
@@ -133,11 +132,11 @@ class DeviceApi (private val context: Context) {
     }
 
     /**
-     * Последние фото из DCIM.
+     * The latest photos from DCIM.
      *
-     * Отдельное разрешение на медиатеку тут не нужно: при выданном «доступе ко
-     * всем файлам» DCIM читается как обычный каталог. MediaStore понадобился бы
-     * только чтобы видеть чужие альбомы и облачные подборки.
+     * A separate media library permission is not needed here: with "access to all files"
+     * granted, DCIM is read as an ordinary directory. MediaStore would be needed only to
+     * see other people's albums and cloud collections.
      */
     private fun photosLatest (args: JSONObject): JSONObject {
         val root = java.io.File(args.optString("dir").ifBlank { "/storage/emulated/0/DCIM" })
@@ -168,7 +167,7 @@ class DeviceApi (private val context: Context) {
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")
     }
 
-    /** Что установлено и может быть запущено: пакет и человеческое имя. */
+    /** What is installed and can be launched: the package and a human-readable name. */
     private fun apps (): JSONObject {
         val manager = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -181,7 +180,7 @@ class DeviceApi (private val context: Context) {
         return ok(JSONObject().put("count", list.length()).put("apps", list))
     }
 
-    /** Ближайший будильник: время, метка и приложение, которое его поставило. */
+    /** The next alarm: time, label and the app that set it. */
     private fun alarmNext (): JSONObject {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val clock = manager.nextAlarmClock
@@ -192,10 +191,10 @@ class DeviceApi (private val context: Context) {
             .put("triggeredBy", if (clock.showIntent == null) "unknown" else "app"))
     }
 
-    /** Поставить будильник: без skipUi системные часы спросят человека. */
+    /** Set an alarm: without skipUi the system clock asks the person. */
     private fun alarmSet (args: JSONObject): JSONObject {
-        // запуск чужого экрана из фона разрешён только с этим доступом,
-        // иначе система молча ничего не открывает
+        // launching someone else's screen from the background is allowed only with this access,
+        // otherwise the system silently opens nothing
         if (!android.provider.Settings.canDrawOverlays(context)) {
             error("нужен доступ «поверх других приложений»: без него Android гасит запуск часов из фона")
         }
@@ -212,7 +211,7 @@ class DeviceApi (private val context: Context) {
         return ok(JSONObject().put("requested", true).put("hour", hour).put("minute", minute))
     }
 
-    /** Снять ближайший будильник: тоже через системные часы. */
+    /** Dismiss the next alarm: also through the system clock. */
     private fun alarmDismiss (): JSONObject {
         val intent = Intent(AlarmClock.ACTION_DISMISS_ALARM)
             .putExtra(AlarmClock.EXTRA_ALARM_SEARCH_MODE, AlarmClock.ALARM_SEARCH_MODE_NEXT)

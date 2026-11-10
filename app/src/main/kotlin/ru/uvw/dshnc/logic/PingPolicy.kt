@@ -1,14 +1,14 @@
 package ru.uvw.dshnc.logic
 
 /**
- * Расписание пинга: интервал растёт, пока сервер молчит, и сбрасывается, когда
- * была работа.
+ * Ping schedule: the interval grows while the server stays silent and is reset once
+ * there was work.
  *
- * Арифметика вынесена из службы, потому что её надо проверять: ошибка здесь
- * означала «узел выглядит мёртвым» или «пингуем чаще, чем нужно».
+ * The arithmetic lives outside the service because it has to be tested: a mistake here
+ * meant "the node looks dead" or "we ping more often than necessary".
  */
 object PingPolicy {
-    /** Следующий интервал в секундах и новое значение растяжения. */
+    /** The next interval in seconds and the new stretch value. */
     fun next (baseInterval: Int, factor: Int, stretch: Int, hadWork: Boolean): Pair<Int, Int> {
         val safeFactor = factor.coerceAtLeast(1)
         val safeBase = baseInterval.coerceAtLeast(0)
@@ -18,7 +18,7 @@ object PingPolicy {
         return safeBase * nextStretch to nextStretch
     }
 
-    /** Пора ли считать канал мёртвым: нет ответа дольше двух интервалов. */
+    /** Is it time to consider the channel dead: no answer for longer than two intervals. */
     fun isSilent (silenceMs: Long, intervalSeconds: Int, stretch: Int): Boolean {
         val interval = intervalSeconds.coerceAtLeast(1) * stretch.coerceAtLeast(1) * 1000L
         return silenceMs > interval * 2

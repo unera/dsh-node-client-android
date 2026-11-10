@@ -9,11 +9,11 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Транспорт узла: те же запросы, что делает `dshnc`, только на Kotlin.
+ * The node's transport: the same requests `dshnc` makes, only in Kotlin.
  *
- * Ничего своего не придумываем: `pair` обменивает одноразовый код на токен,
- * `announce` объявляет возможности, `commands` забирает пачку, `result`
- * возвращает ответ. Так узел виден в админке ровно так же, как ноутбук.
+ * We invent nothing of our own: `pair` exchanges a one-time code for a token,
+ * `announce` declares the capabilities, `commands` picks up a batch, `result` sends the
+ * answer back. That way the node is visible in the admin panel exactly like a laptop.
  */
 class NodeApi(private val base: String) {
     private val http = OkHttpClient.Builder()
@@ -41,7 +41,7 @@ class NodeApi(private val base: String) {
         }
     }
 
-    /** Текст отказа: сервер присылает его словами, их и показываем человеку. */
+    /** The rejection text: the server sends it in words, and we show those to the person. */
     private fun extractMessage(text: String, status: Int): String = try {
         JSONObject(text).optString("message").ifBlank { "HTTP $status" }
     } catch (_: Exception) {
@@ -67,7 +67,7 @@ class NodeApi(private val base: String) {
             .put("allowEscalation", false)
     )
 
-    /** Событие устройства: нажатие кнопки, готовность, что угодно. */
+    /** A device event: a button press, readiness, anything. */
     fun sendEvent (token: String, body: JSONObject): JSONObject =
         call("POST", "/v1/events", token = token, body = body)
 

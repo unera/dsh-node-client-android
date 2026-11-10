@@ -12,11 +12,12 @@ import org.json.JSONObject
 import ru.uvw.dshnc.NotificationActionReceiver
 
 /**
- * Уведомления с кнопками.
+ * Notifications with buttons.
  *
- * Узел показывает заголовок, текст и до трёх кнопок. Нажатие отправляется на
- * сервер как событие с номером уведомления и номером кнопки: что это значит и
- * в какую сессию попадёт — решает сервер, устройство смысла не знает.
+ * The node shows a title, a text and up to three buttons. A press is sent to the
+ * server as an event carrying the notification number and the button number: what it
+ * means and which session it lands in is decided by the server, the device knows no
+ * meaning.
  */
 class NotificationsApi (private val context: Context) {
     fun schema (): JSONObject = JSONObject()
@@ -54,8 +55,8 @@ class NotificationsApi (private val context: Context) {
             .setOnlyAlertOnce(false)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 
-        // каждая кнопка — отдельный приёмник: своё действие должно сработать
-        // даже если приложение закрыто
+        // every button is a separate receiver: its own action has to fire
+        // even when the app is closed
         for (index in 0 until minOf(buttons.length(), 3)) {
             val button = buttons.optJSONObject(index) ?: continue
             val buttonId = button.optString("id")

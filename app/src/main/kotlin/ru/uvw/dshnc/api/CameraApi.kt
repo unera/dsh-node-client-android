@@ -17,14 +17,14 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 
 /**
- * Снимок с камеры по команде.
+ * A camera snapshot on command.
  *
- * Работает тихо, без экрана: камера открывается напрямую через Camera2, кадр
- * пишется в файл. Требует разрешения CAMERA и службы с типом `camera` — без
- * этого Android 14+ отказывает в доступе из фона.
+ * It works quietly, without a screen: the camera is opened directly through Camera2 and
+ * the frame is written to a file. It needs the CAMERA permission and a service of type
+ * `camera` — without that Android 14+ denies access from the background.
  *
- * Возвращается путь и размер: сам файл забирают через файловый API, отдельного
- * канала для картинок не заводим.
+ * The path and the size are returned: the file itself is fetched through the file API,
+ * we do not start a separate channel for pictures.
  */
 class CameraApi (private val context: Context) {
     fun snap (args: JSONObject): JSONObject {
@@ -73,7 +73,7 @@ class CameraApi (private val context: Context) {
                     device.createCaptureSession(listOf(reader.surface), object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured (session: CameraCaptureSession) {
                             session.capture(request.build(), null, handler)
-                            // закрываем камеру сразу после кадра: держать её незачем
+                            // we close the camera right after the frame: there is no point in holding it
                             handler.postDelayed({ runCatching { device.close() } }, 1500)
                         }
 
@@ -106,12 +106,12 @@ class CameraApi (private val context: Context) {
     }
 
     /**
-     * Как повернуть кадр, чтобы верх был верхом.
+     * How to rotate the frame so that the top is the top.
      *
-     * Сенсор стоит в телефоне повёрнутым, поэтому матрица отдаёт картинку
-     * боком. Для задней камеры поворот вычитается из поворота экрана, для
-     * фронтальной — складывается; это стандартная формула Camera2, и без неё
-     * снимки приходят «неверный верх-низ».
+     * The sensor sits rotated inside the phone, so the matrix returns the picture on its
+     * side. For the back camera the rotation is subtracted from the screen rotation, for
+     * the front one it is added; this is the standard Camera2 formula, and without it
+     * the snapshots come out "wrong top and bottom".
      */
     private fun orientation (manager: CameraManager, id: String, wanted: String): Int {
         val characteristics = manager.getCameraCharacteristics(id)
@@ -127,10 +127,10 @@ class CameraApi (private val context: Context) {
     }
 
     /**
-     * Как сейчас повёрнут телефон — по акселерометру.
+     * How the phone is rotated right now — by the accelerometer.
      *
-     * Поворот экрана тут не годится: когда экран погашен, он не обновляется, и
-     * кадр остаётся в прежней ориентации, сколько телефон ни крути.
+     * The screen rotation is no good here: when the screen is off it does not update, and
+     * the frame keeps the previous orientation however much the phone is turned.
      */
     private fun deviceRotationDegrees (): Int {
         val manager = context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
@@ -152,7 +152,7 @@ class CameraApi (private val context: Context) {
         val v = value[0] ?: return displayRotation()
         val x = v[0]
         val y = v[1]
-        // телефон лежит плашмя — по акселерометру сторону не определить
+        // the phone is lying flat — the side cannot be told from the accelerometer
         if (kotlin.math.abs(x) < 3f && kotlin.math.abs(y) < 3f) return displayRotation()
         return when {
             kotlin.math.abs(x) > kotlin.math.abs(y) -> if (x > 0) 90 else 270
@@ -160,7 +160,7 @@ class CameraApi (private val context: Context) {
         }
     }
 
-    /** Запасной путь: поворот экрана, если акселерометра нет. */
+    /** The fallback: the screen rotation, if there is no accelerometer. */
     private fun displayRotation (): Int {
         val rotation = (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
             .defaultDisplay.rotation
@@ -172,7 +172,7 @@ class CameraApi (private val context: Context) {
         }
     }
 
-    /** «front», «back» или номер: ищем по направлению объектива. */
+    /** "front", "back" or a number: we look it up by the lens direction. */
     private fun pickCamera (manager: CameraManager, wanted: String): String? {
         val ids = manager.cameraIdList
         if (wanted in ids) return wanted
@@ -185,14 +185,14 @@ class CameraApi (private val context: Context) {
         } ?: ids.firstOrNull()
     }
 
-    /** Размер кадра из тех, что камера умеет отдавать в JPEG. */
+    /** A frame size out of those the camera can hand out as JPEG. */
     private fun pickSize (manager: CameraManager, id: String): Pair<Int, Int> {
         val map = manager.getCameraCharacteristics(id)
             .get(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return 1600 to 1200
         val sizes = map.getOutputSizes(ImageFormat.JPEG)?.toList().orEmpty()
         if (sizes.isEmpty()) return 1600 to 1200
-        // берём ближайший к 1600x1200: хватает для разглядеть, и не тяжело
+        // we take the one closest to 1600x1200: enough to make things out, and not heavy
         val best = sizes.minBy { kotlin.math.abs(it.width * it.height - 1600 * 1200) }
         return best.width to best.height
     }

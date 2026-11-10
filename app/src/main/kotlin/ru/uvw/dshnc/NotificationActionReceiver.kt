@@ -7,10 +7,11 @@ import ru.uvw.dshnc.api.NodeApi
 import ru.uvw.dshnc.store.TokenStore
 
 /**
- * Нажатие кнопки в уведомлении.
+ * A button press in a notification.
  *
- * Устройство сообщает только два номера: уведомление и кнопку. Текст, смысл и
- * сессия живут на сервере — иначе клиент мог бы говорить за человека.
+ * The device reports only two numbers: the notification and the button. The text, the
+ * meaning and the session live on the server — otherwise the client could speak for
+ * the person.
  */
 class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive (context: Context, intent: Intent) {
@@ -19,13 +20,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val store = TokenStore(context)
         val base = store.base ?: return
         val token = store.token ?: return
-        // убираем уведомление сразу: второй раз эта кнопка всё равно не сработает
+        // drop the notification right away: this button will not fire a second time anyway
         runCatching {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
                 .cancel(notification.hashCode())
         }
-        // номер нажатия присваиваем один раз: повтор уходит с тем же номером,
-        // и сервер понимает, что это не второе нажатие, а та же отправка
+        // the press number is assigned once: a retry goes out with the same number,
+        // and the server understands it is not a second press but the same send
         val press = store.nextPress()
         val body = org.json.JSONObject()
             .put("notification", notification)

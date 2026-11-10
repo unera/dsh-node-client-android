@@ -10,11 +10,12 @@ import androidx.appcompat.app.AppCompatActivity
 import ru.uvw.dshnc.store.TokenStore
 
 /**
- * Настройки узла: чем живёт канал, как часто спрашивать очередь и что отдано.
+ * Node settings: what keeps the channel alive, how often to poll the queue, and what is
+ * shared.
  *
- * Пинг здесь про обнаружение обрыва, а не про доставку: команды приходят кадром
- * `state`. Поэтому «опрос» по умолчанию выключен — оставлен только как запас,
- * если сокет не поднимется.
+ * Ping here is about detecting a break, not about delivery: commands arrive in the
+ * `state` frame. That is why "polling" is off by default — it is kept only as a
+ * fallback in case the socket does not come up.
  */
 class SettingsActivity : AppCompatActivity() {
     private lateinit var store: TokenStore

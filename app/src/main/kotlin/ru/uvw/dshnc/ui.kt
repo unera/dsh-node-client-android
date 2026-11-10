@@ -8,11 +8,11 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * Общие куски оформления в стиле системных настроек Android: заголовок экрана
- * со стрелкой назад, заголовки групп и пункты «название + пояснение».
+ * Shared pieces of styling in the manner of the Android system settings: a screen title
+ * with a back arrow, group headings and "name + explanation" items.
  *
- * Вынесено отдельно, чтобы главный экран, меню и разделы выглядели одинаково
- * и чтобы правка стиля была в одном месте.
+ * Kept separately so that the main screen, the menu and the sections look the same
+ * and so that a style edit happens in one place.
  */
 object Ui {
     fun screen (activity: Activity, title: String, onBack: (() -> Unit)?): LinearLayout {
@@ -43,7 +43,7 @@ object Ui {
         return root
     }
 
-    /** Заголовок группы: полужирный, отделён отступом сверху. */
+    /** Group heading: bold, separated by padding on top. */
     fun group (activity: Activity, text: String): TextView = TextView(activity).apply {
         this.text = text
         textSize = 14f
@@ -53,7 +53,7 @@ object Ui {
         setPadding((20 * density).toInt(), (26 * density).toInt(), (20 * density).toInt(), (10 * density).toInt())
     }
 
-    /** Пункт: название крупно, пояснение мелко и приглушённо. */
+    /** An item: the name large, the explanation small and muted. */
     fun item (activity: Activity, title: String, subtitle: String?, onClick: (() -> Unit)?): LinearLayout {
         val density = activity.resources.displayMetrics.density
         return LinearLayout(activity).apply {
@@ -79,7 +79,7 @@ object Ui {
         }
     }
 
-    /** Кнопка внутри пункта: тёмная подложка и запас по высоте под палец. */
+    /** A button inside an item: dark background and extra height for a finger. */
     fun button (activity: Activity, text: String, onClick: () -> Unit): android.widget.Button {
         val density = activity.resources.displayMetrics.density
         return android.widget.Button(activity).apply {
@@ -101,9 +101,9 @@ object Ui {
     }
 
     /**
-     * Пункт в три строки: название, состояние отдельной строкой и постоянное
-     * пояснение. Пояснение не зависит от состояния — оно объясняет, зачем
-     * пункт нужен, а не что сейчас включено.
+     * A three-line item: the name, the state on its own line and a permanent
+     * explanation. The explanation does not depend on the state — it explains why the
+     * item is needed, not what is currently on.
      */
     fun itemEx (
         activity: Activity,
@@ -143,10 +143,10 @@ object Ui {
         }
     }
 
-    /** Цвет состояния: включено — зелёный, выключено — красный. */
+    /** State colour: on is green, off is red. */
     fun stateColor (on: Boolean): Int = Color.parseColor(if (on) "#86efac" else "#f87171")
 
-    /** Тонкая линия между пунктами. */
+    /** A thin line between items. */
     fun divider (activity: Activity): View {
         val density = activity.resources.displayMetrics.density
         return View(activity).apply {

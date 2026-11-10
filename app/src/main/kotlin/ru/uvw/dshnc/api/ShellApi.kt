@@ -5,17 +5,17 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Выполнение команды оболочки на телефоне.
+ * Running a shell command on the phone.
  *
- * Android разрешает приложению запускать `/system/bin/sh` и утилиты toybox —
- * с правами самого приложения. Значит доступно то же, что и файловому API
- * (разрешённые каталоги, выданные разрешения), и ничего сверх: root-команд,
- * чужих данных и установки пакетов здесь нет.
+ * Android lets an app launch `/system/bin/sh` and the toybox utilities — with the app's
+ * own permissions. So what is available is exactly what the file API has (the allowed
+ * directories, the permissions granted), and nothing beyond: no root commands, no
+ * other people's data and no package installation here.
  *
- * Отдельная тонкость: фильтровать произвольную команду по путям невозможно —
- * `sh -c` обойдёт любую проверку строки. Поэтому рабочий каталог проверяем
- * обязательно, а саму команду считаем тем, чем она является: кодом, который
- * запускает человек или модель.
+ * One separate subtlety: filtering an arbitrary command by paths is impossible —
+ * `sh -c` will get around any string check. That is why the working directory is
+ * checked without fail, while the command itself is taken for what it is: code that a
+ * person or a model runs.
  */
 class ShellApi (private val roots: List<String>) {
     fun schema (): JSONObject = JSONObject()
@@ -41,7 +41,7 @@ class ShellApi (private val roots: List<String>) {
         if (command.isEmpty()) return err("bad_args", "нужна команда")
         val cwd = args.optString("cwd").ifBlank { roots.firstOrNull() ?: "/storage/emulated/0" }
         if (!allowed(cwd)) return err("path_denied", "каталог $cwd вне разрешённых: ${roots.joinToString(", ")}")
-        // как на десктопе: `timeout` в секундах; `timeoutMs` оставлен для явности
+        // same as on the desktop: `timeout` is in seconds; `timeoutMs` is kept for explicitness
         val timeout = if (args.has("timeoutMs")) {
             args.optInt("timeoutMs", 15_000)
         } else {
@@ -53,12 +53,12 @@ class ShellApi (private val roots: List<String>) {
                 .directory(File(cwd))
                 .redirectErrorStream(false)
                 .start()
-            // читаем оба потока параллельно: иначе полный буфер одного вешает другой
+            // we read both streams in parallel: otherwise a full buffer of one hangs the other
             val out = StringBuilder()
             val errText = StringBuilder()
             val reader = Thread { drain(process.inputStream, out, LIMIT) }.apply { start() }
             val errReader = Thread { drain(process.errorStream, errText, ERR_LIMIT) }.apply { start() }
-            // stdin подаём заранее: скрипт может ждать данные
+            // stdin is fed in advance: the script may be waiting for data
             val input = args.optString("stdin")
             if (input.isNotEmpty()) {
                 runCatching {
@@ -73,8 +73,8 @@ class ShellApi (private val roots: List<String>) {
             errReader.join(2000)
             val code = if (done) process.exitValue() else -1
             val spent = System.currentTimeMillis() - started
-            // отказ при ненулевом коде — так же, как десктопный shell.exec:
-            // модель должна видеть «упало», а не «успех с числом»
+            // a rejection on a non-zero code — exactly like the desktop shell.exec:
+            // the model has to see "it failed", not "success with a number"
             if (!done) {
                 return err("timeout", "команда не уложилась в ${timeout / 1000} с")
             }
@@ -96,7 +96,7 @@ class ShellApi (private val roots: List<String>) {
         }
     }
 
-    /** Читать поток до предела: вывод гигантской команды не должен съесть память. */
+    /** Read a stream up to a limit: the output of a gigantic command must not eat memory. */
     private fun drain (input: java.io.InputStream, sink: StringBuilder, limit: Int) {
         val buffer = ByteArray(8192)
         var total = 0
@@ -114,7 +114,7 @@ class ShellApi (private val roots: List<String>) {
         }
     }
 
-    /** Рабочий каталог должен быть внутри разрешённых: это проверяемо и проверяем. */
+    /** The working directory has to be inside the allowed ones: that is checkable and does get checked. */
     private fun allowed (path: String): Boolean {
         val target = try {
             File(path).canonicalPath

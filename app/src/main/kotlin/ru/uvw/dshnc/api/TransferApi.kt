@@ -8,11 +8,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Передача файлов одним HTTP-запросом — как в десктопном клиенте.
+ * File transfer in a single HTTP request — the same as in the desktop client.
  *
- * Сервер отдаёт файл по `v1/download-file?seq=…`, узел пишет его в
- * `<path>.inprogress` и переименовывает только после сверки sha256 и размера.
- * Разрешение на передачу даёт сама команда: её номер и есть билет.
+ * The server serves a file at `v1/download-file?seq=…`, the node writes it to
+ * `<path>.inprogress` and renames it only after checking sha256 and the size. The
+ * permission to transfer is given by the command itself: its number is the ticket.
  */
 class TransferApi(private val base: String, private val token: String) {
 
@@ -32,11 +32,11 @@ class TransferApi(private val base: String, private val token: String) {
     }
 
     /**
-     * Отдать файл с телефона на сервер (host → node наоборот).
+     * Send a file from the phone to the server (the reverse of host → node).
      *
-     * Один запрос: сервер пишет во временный файл и переименовывает после
-     * сверки sha256, поэтому обрыв не оставляет половину файла под настоящим
-     * именем.
+     * One request: the server writes into a temporary file and renames it after
+     * checking sha256, so a break does not leave half a file under the real
+     * name.
      */
     fun upload (seq: Long, args: JSONObject): JSONObject {
         val path = args.optString("path").ifBlank { return err("bad_args", "не передан путь, что отправлять") }

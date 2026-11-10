@@ -4,11 +4,11 @@ import android.content.Context
 import java.io.File
 
 /**
- * Журнал падений в файл приложения.
+ * Crash log kept in the app's file.
  *
- * На телефоне нет ни консоли, ни adb под рукой, а «снова произошёл сбой» ничего
- * не объясняет. Пишем стек в `crash.txt`: его можно прочитать при следующем
- * запуске и показать на экране.
+ * There is neither a console nor adb at hand on a phone, and "a failure happened again"
+ * explains nothing. We write the stack into `crash.txt`: it can be read on the next
+ * launch and shown on the screen.
  */
 object CrashLog {
     fun write(context: Context, error: Throwable) {

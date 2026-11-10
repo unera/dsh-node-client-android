@@ -32,20 +32,20 @@ import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.store.TokenStore
 
 /**
- * Узел в фоне.
+ * The node in the background.
  *
- * Android убивает обычные процессы, поэтому соединение живёт в foreground
- * service с постоянным уведомлением — без него узла просто нет, когда экран
- * погашен. Пока это опрос: `announce` при старте, затем `commands` раз в секунду.
- * WebSocket добавим, когда понадобится мгновенная доставка; для первого шага
- * опроса достаточно, и он виден в админке как живой узел.
+ * Android kills ordinary processes, so the connection lives in a foreground service with
+ * a permanent notification — without it there simply is no node once the screen is off.
+ * So far this was polling: `announce` at startup, then `commands` once a second. We will
+ * add the WebSocket when instant delivery is needed; for the first step polling is
+ * enough, and it shows up in the admin panel as a live node.
  */
 class NodeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
     private var channelRef: Socket? = null
-    // сигнал «канал закрылся»: по нему цикл ожидания просыпается сразу, а не
-    // через минуту, иначе узел висит без связи до очередного тика
+    // the "channel closed" signal: the wait loop wakes up on it at once instead of
+    // a minute later, otherwise the node hangs without a link until the next tick
     private val closedSignal = kotlinx.coroutines.channels.Channel<Unit>(
         kotlinx.coroutines.channels.Channel.CONFLATED,
     )
@@ -54,7 +54,7 @@ class NodeService : Service() {
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
     private var startedAt = 0L
-    /** Последний увиденный номер команды: сервер сверяет по нему. */
+    /** The last command number seen: the server cross-checks against it. */
     @Volatile private var known: Long = 0L
 
 
@@ -63,8 +63,8 @@ class NodeService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        // экран гаснет — система норовит усыпить сеть; частичная блокировка
-        // держит процесс и радио живыми, иначе пинг «пропадает» на минуты
+        // the screen goes off — the system tries to put the network to sleep; a partial
+        // lock keeps the process and the radio alive, otherwise the ping "disappears" for minutes
         val power = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         wakeLock = power.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "dshnc:node").apply {
             setReferenceCounted(false)
@@ -78,9 +78,9 @@ class NodeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // С 34 тип службы надо указывать и в вызове: объявления в манифесте мало,
-        // без него система бросает MissingForegroundServiceTypeException — это и
-        // было причиной «снова произошёл сбой»
+        // Since 34 the service type has to be given on the call as well: declaring it in
+        // the manifest is not enough, without it the system throws
+        // MissingForegroundServiceTypeException — and that was the cause of "a failure happened again"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -92,19 +92,19 @@ class NodeService : Service() {
         }
         Heartbeat.schedule(this)
         val store = TokenStore(this)
-        // служба уже работает и держит канал — повторный старт ничего не значит
+        // the service is already running and holds the channel — a repeated start means nothing
         if (loop?.isActive == true) {
             runCatching { store.addEvent("start-повтор", "канал уже держится") }
-            // надпись не должна врать: второй запуск не открывает канал, но
-            // уведомление обязано показывать настоящее состояние первого
+            // the label must not lie: the second launch does not open the channel, but
+            // the notification has to show the real state of the first one
             runCatching {
                 notify(getString(if (channelOpen) R.string.status_connected else R.string.status_connecting))
             }
             return START_STICKY
         }
-        // каждый старт службы — след: по нему видно, что процесс убивали
+        // every service start is a trace: it shows that the process was killed
         store.starts = store.starts + 1
-        // выключено человеком — никакой сети, даже если кто-то пытается поднять
+        // turned off by the person — no network, even if someone tries to bring it up
         if (!store.enabled) {
             stopSelf()
             return START_NOT_STICKY
@@ -121,8 +121,8 @@ class NodeService : Service() {
             try {
                 run(base, token)
             } catch (error: Throwable) {
-                // фоновая служба не должна падать молча: пишем причину в файл,
-                // который потом можно забрать через files
+                // a background service must not fail silently: we write the reason into a
+                // file that can later be fetched through files
                 CrashLog.write(this@NodeService, error)
                 notify(error.message ?: getString(R.string.status_disconnected))
             }
@@ -132,14 +132,14 @@ class NodeService : Service() {
 
     private suspend fun run(base: String, token: String) {
         val api = NodeApi(base)
-        // что умеем: файлы внутри разрешённых каталогов
+        // what we can do: files inside the allowed directories
         val apis = JSONArray()
             .put(FilesApi.schema(NodeApi.VERSION))
             .put(SessionApi.schema())
             .put(NotificationsApi(this).schema())
             .put(DeviceApi(this).schema())
             .put(ShellApi(TokenStore(this).roots).schema())
-        // список каталогов задаётся в настройках и живёт в состоянии узла
+        // the list of directories is set in the settings and lives in the node state
         val files = FilesApi(this, TokenStore(this).roots)
         val session = SessionApi(this)
         val notifications = NotificationsApi(this)
@@ -151,7 +151,7 @@ class NodeService : Service() {
                 api.announce(token, apis, uptimeSeconds())
                 runCatching { TokenStore(this@NodeService).connected = true }
                 notify(getString(R.string.status_connected))
-                // работа приходит кадром: поднимаем канал и ждём
+                // work arrives as a frame: we bring the channel up and wait
                 val channel = Socket(
                     base = base,
                     token = token,
@@ -184,20 +184,20 @@ class NodeService : Service() {
                         }
                     },
                 )
-                // закрываем прошлое соединение, если оно ещё есть: два живых
-                // сокета дают «пинги ходят, а сервер считает офлайн»
+                // we close the previous connection if it is still there: two live
+                // sockets give "the pings go but the server considers us offline"
                 runCatching { channelRef?.takeIf { it !== channel }?.close() }
                 channelRef = channel
                 channelOpen = false
                 val connNumber = TokenStore(this@NodeService).nextConnection()
                 runCatching { TokenStore(this@NodeService).addEvent("соединение", "№$connNumber") }
                 channel.connect(connNumber)
-                // ждём открытия: иначе цикл ожидания выйдет сразу
+                // we wait for the opening: otherwise the wait loop exits right away
                 delay(500)
                 if (!channelOpen) delay(RECONNECT_MS)
                 startPing(channel)
-                // ждём, пока канал жив; закрылся — уходим на новый круг и
-                // переподключаемся, иначе после рестарта сервера узел замолкает
+                // we wait while the channel is alive; it closed — we go for another round
+                // and reconnect, otherwise the node falls silent after a server restart
                 waitForWork(channel, api, token, files, session, transfer, notifications, device, shell)
             } catch (error: Throwable) {
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message ?: error.javaClass.simpleName) }
@@ -209,22 +209,22 @@ class NodeService : Service() {
     }
 
     /**
-     * Ждём кадр `state` — сервер сам скажет, что появилась работа.
+     * We wait for the `state` frame — the server says itself that work has appeared.
      *
-     * Пока кадров нет, ничего не происходит: пинг отвечает за то, чтобы заметить
-     * обрыв, а не за доставку. Раз в `POLL_FALLBACK_MS` на всякий случай
-     * проверяем очередь — это запас, если сокет не поднялся.
+     * While there are no frames nothing happens: ping is responsible for noticing a
+     * break, not for delivery. Once per `POLL_FALLBACK_MS` we check the queue just in
+     * case — that is the fallback if the socket did not come up.
      */
-    /** Пинг по расписанию: живёт отдельно от команд и только следит за каналом. */
+    /** Ping on a schedule: it lives separately from the commands and only watches the channel. */
     private fun startPing(socket: Socket) {
         pingJob?.cancel()
         val store = TokenStore(this)
         val interval = store.pingInterval
         if (interval <= 0) return
         pingJob = scope.launch {
-            // Пингуем каждые `interval` секунд. Растяжение в клиенте растёт
-            // постепенно (1×, 2×, 3×…), а не «сразу в 10 раз»: иначе узел,
-            // который молчит по делу, выглядит мёртвым для сервера.
+            // We ping every `interval` seconds. The stretch in the client grows
+            // gradually (1×, 2×, 3×…), not "ten times at once": otherwise a node that
+            // stays silent for a reason looks dead to the server.
             var seq = 0
             var stretch = 1
             var current = interval
@@ -233,7 +233,7 @@ class NodeService : Service() {
             while (true) {
                 delay(current * 1000L)
                 val silence = System.currentTimeMillis() - answered
-                // «канал мёртв» решает PingPolicy — тот же код, что покрыт тестами
+                // "the channel is dead" is decided by PingPolicy — the same code that is covered by tests
                 if (ru.uvw.dshnc.logic.PingPolicy.isSilent(silence, interval, stretch)) {
                     channelOpen = false
                     socket.close()
@@ -241,8 +241,8 @@ class NodeService : Service() {
                 }
                 if (state.lastPong > answered) answered = state.lastPong
                 socket.ping(++seq)
-                // в журнал: номер пинга и пауза перед ним — по этой паузе и
-                // вычислим, на каком простое нас рвут снаружи
+                // into the log: the ping number and the pause before it — it is from that
+                // pause that we will work out at which idle time they cut us off from outside
                 runCatching {
                     TokenStore(this@NodeService).addEvent("ping", "#$seq пауза ${current}с")
                 }
@@ -254,8 +254,8 @@ class NodeService : Service() {
     }
 
     private suspend fun waitForWork(socket: Socket, api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
-        // Только по кадру сервера: опроса нет вовсе. Тишина в канале — норма,
-        // а закрытие канала будит цикл мгновенно, чтобы переподключиться.
+        // Only by the server's frame: there is no polling at all. Silence in the channel
+        // is normal, while closing the channel wakes the loop instantly so that we reconnect.
         while (storeConnected()) {
             kotlinx.coroutines.withTimeoutOrNull(60_000L) { closedSignal.receive() }
             harvest(api, token, files, session, transfer, notifications, device, shell)
@@ -265,17 +265,17 @@ class NodeService : Service() {
     private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
         while (true) {
             val answer = api.commands(token)
-            // отметка жизни: экран покажет, что служба действительно работает
+            // the liveness mark: the screen will show that the service really works
             runCatching { TokenStore(this@NodeService).heartbeat = System.currentTimeMillis() }
             val batch = answer.optJSONArray("commands") ?: JSONArray()
             for (index in 0 until batch.length()) {
                 val command = batch.getJSONObject(index)
-                // ни одного API мы пока не объявили, поэтому честно отвечаем,
-                // что метод неизвестен: молчание выглядело бы как зависание
+                // we have not declared a single API yet, so we honestly answer that the
+                // method is unknown: silence would look like a hang
                 val method = command.optString("method")
                 val args = command.optJSONObject("args") ?: JSONObject()
-                // методы session.* и files.* различаем по префиксу и по известным
-                // именам: сервер присылает имя метода, а не «api.метод»
+                // we tell the session.* and files.* methods apart by the prefix and by the
+                // known names: the server sends the method name, not "api.method"
                 val outcome = when {
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
@@ -285,8 +285,8 @@ class NodeService : Service() {
                     method == "copyFromDevice" -> transfer.upload(command.optLong("seq"), args)
                     else -> files.handle(method, args)
                 }
-                // `ok` — обязательное поле: по нему сервер решает, успех это или
-                // отказ. Без него любая команда выглядела как «internal error».
+                // `ok` is a mandatory field: the server decides from it whether this is a
+                // success or a rejection. Without it any command looked like "internal error".
                 val payload = if (outcome.optString("status") == "ok") {
                     JSONObject()
                         .put("ok", true)
@@ -305,18 +305,18 @@ class NodeService : Service() {
                 executed.incrementAndGet()
                 known = maxOf(known, command.optLong("seq"))
             }
-            // пачка кончилась: дальше ждём кадр, а не крутим цикл
+            // the batch is over: from here we wait for a frame instead of spinning the loop
             return
         }
     }
 
     /**
-     * Сколько работает узел, а не сколько живёт телефон.
+     * How long the node has been running, not how long the phone has been up.
      *
-     * `elapsedRealtime()` считает с загрузки устройства, поэтому узел на свежем
-     * телефоне рапортовал «21 день». Время старта службы помним сами.
+     * `elapsedRealtime()` counts from the device boot, so the node on a fresh phone
+     * reported "21 days". We remember the service start time ourselves.
      */
-    /** Канал считается живым, пока служба не увидела закрытие. */
+    /** The channel counts as alive until the service sees the close. */
     @Volatile private var channelOpen = false
 
     private fun storeConnected(): Boolean = channelOpen
@@ -339,8 +339,8 @@ class NodeService : Service() {
                 NotificationChannel(CHANNEL, getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW)
             )
         }
-        // заголовок — имя узла, под ним состояние; рядом кнопка выключения,
-        // чтобы не открывать приложение ради «выключить»
+        // the title is the node name, the state underneath it; next to it the turn-off
+        // button, so that one does not open the app just to "turn off"
         val name = TokenStore(this).name ?: getString(R.string.app_name)
         val stop = android.app.PendingIntent.getBroadcast(
             this,
@@ -374,19 +374,19 @@ class NodeService : Service() {
     }
 
     companion object {
-        /** Сколько команд исполнено: показываем на экране. */
+        /** How many commands were executed: shown on the screen. */
         val executed = java.util.concurrent.atomic.AtomicLong()
 
         private const val CHANNEL = "node"
         private const val NOTIFICATION_ID = 1
-        /** Методы, которые обслуживает `session`. */
+        /** The methods served by `session`. */
         private val SESSION_METHODS = setOf("debug_info", "ping", "cwd")
 
-        /** Запасная проверка очереди, если кадр не пришёл. */
+        /** A fallback queue check, in case the frame did not come. */
         private const val POLL_FALLBACK_MS = 30_000L
         private const val RECONNECT_MS = 5000L
 
-        /** Сколько работает узел — нужно методу `session.ping`. */
+        /** How long the node has been running — needed by the `session.ping` method. */
         fun uptime(): Long = instance?.uptimeSeconds() ?: 0L
 
         @Volatile private var instance: NodeService? = null
