@@ -3,6 +3,7 @@ package ru.uvw.dshnc
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.text.method.ScrollingMovementMethod
 import android.view.Gravity
@@ -36,6 +37,19 @@ class AskActivity : AppCompatActivity() {
 
     override fun onCreate (state: Bundle?) {
         super.onCreate(state)
+        // A question has to reach a locked phone: without these two the window is simply
+        // not shown over the keyguard, and the person sees nothing at all until they
+        // unlock — which is exactly what happened on the first live check.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window?.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+            )
+        }
         window?.setBackgroundDrawableResource(android.R.color.transparent)
         bind(intent.getLongExtra(EXTRA_SEQ, -1L))
     }
