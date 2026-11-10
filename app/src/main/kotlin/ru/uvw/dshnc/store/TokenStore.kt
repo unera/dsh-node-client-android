@@ -115,15 +115,16 @@ class TokenStore(private val context: Context) {
         set(value) = write("lastRtt", value.toString())
 
     /**
-     * The server generation the node remembers.
+     * The server generation this node knows.
      *
-     * A new `epoch` means the server restarted: everything it had already issued to this
-     * node died together with the old generation, so the cursor is worthless and the
-     * restart has to be declared again. `-1` — nothing is known yet (a fresh install).
+     * `null` means "I know none": a fresh install, or a reset after the server named a
+     * generation that is not ours. `null` is also how the announce says "everything you
+     * issued to me is dead" — that is the only statement that closes in-flight commands on
+     * the server, so forgetting is an action, not a loss.
      */
-    var epoch: Long
-        get() = read("epoch")?.toLongOrNull() ?: -1L
-        set(value) = write("epoch", value.toString())
+    var epoch: Long?
+        get() = read("epoch")?.toLongOrNull()?.takeIf { it >= 0 }
+        set(value) = write("epoch", value?.toString())
 
     fun path(): String = file.absolutePath
 
@@ -190,12 +191,15 @@ class TokenStore(private val context: Context) {
     }
 
     /**
-     * The connection number: incremented before every connect.
+     * The connection counter (`client_epoch` on the wire): incremented before every announce.
      *
-     * The server uses it to decide which connection to keep. Without it two cycles on
-     * one device knock each other out, and "online" flickers.
+     * The server uses it to decide which instance of the node to keep, so it must only grow —
+     * also across an upgrade. The value lives under the `conn` key, where the counter used to
+     * be: pointing it at a fresh key would restart the numbering at one, and a server that
+     * already knows a bigger number would refuse every announce with `client-epoch-stale`
+     * until the counter climbed back.
      */
-    fun nextConnection (): Long {
+    fun nextClientEpoch (): Long {
         val value = (read("conn")?.toLongOrNull() ?: 0L) + 1
         write("conn", value.toString())
         return value

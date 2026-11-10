@@ -35,7 +35,7 @@ class NodeApi(private val base: String) {
         http.newCall(builder.build()).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw ApiException(response.code, extractMessage(text, response.code))
+                throw ApiException(response.code, extractMessage(text, response.code), extractCode(text))
             }
             return if (text.isBlank()) JSONObject() else JSONObject(text)
         }
@@ -48,14 +48,25 @@ class NodeApi(private val base: String) {
         "HTTP $status"
     }
 
+    /**
+     * The machine-readable refusal: `epoch-mismatch` and `client-epoch-stale` are the codes
+     * that decide whether the whole connection is out of date, and the text in words is no
+     * way to tell them apart.
+     */
+    private fun extractCode(text: String): String? = try {
+        JSONObject(text).optString("code").ifBlank { null }
+    } catch (_: Exception) {
+        null
+    }
+
     fun pair(code: String, uuid: String, name: String): JSONObject = call(
         "POST", "/v1/pair", body = JSONObject()
             .put("code", code)
             .put("uuid", uuid)
             .put("name", name)
             .put("aliases", JSONArray())
-            .put("proto", 1)
             .put("clientVersion", VERSION)
+            .put("platform", PLATFORM)
     )
 
     /**
@@ -65,6 +76,11 @@ class NodeApi(private val base: String) {
      * there is no sandbox here, so the cap and the start mode are both `full`; there is
      * no approval dialog, so `approver` is `none` and escalation is off. `applyRules`
      * carries the rules the node binds (`SessionApi.rules`).
+     *
+     * `epoch` is the server generation this node knows, or `null` when it knows none —
+     * `null` is also the statement "everything you issued to me is dead", and that is what
+     * closes in-flight commands on the server. `client_epoch` is the persistent connection
+     * counter: it lets the server keep one instance of a node out of two.
      */
     fun announce(
         token: String,
@@ -76,12 +92,16 @@ class NodeApi(private val base: String) {
         allowEscalation: Boolean = false,
         approver: String = "none",
         base: String = "full",
+        epoch: Long? = null,
+        clientEpoch: Long? = null,
     ): JSONObject = call(
         "PUT", "/v1/announce", token, JSONObject()
             .put("apis", apis)
             .put("applyRules", applyRules)
-            .put("proto", 1)
             .put("clientVersion", VERSION)
+            .put("platform", PLATFORM)
+            .put("epoch", epoch ?: JSONObject.NULL)
+            .put("client_epoch", clientEpoch ?: JSONObject.NULL)
             .put("workdir", workdir ?: JSONObject.NULL)
             .put("access", access)
             .put("allowEscalation", allowEscalation)
@@ -94,15 +114,34 @@ class NodeApi(private val base: String) {
     fun sendEvent (token: String, body: JSONObject): JSONObject =
         call("POST", "/v1/events", token = token, body = body)
 
-    fun commands(token: String, limit: Int = 5): JSONObject =
-        call("GET", "/v1/commands?limit=$limit", token)
+    /**
+     * Take the next batch.
+     *
+     * The generation and the connection counter travel with the request, so that the server
+     * refuses a client from another life instead of handing it work it does not belong to:
+     * `409 epoch-mismatch` or `409 client-epoch-stale` mean the reset.
+     */
+    fun commands(token: String, limit: Int = 5, epoch: Long? = null, clientEpoch: Long? = null): JSONObject {
+        val query = StringBuilder("/v1/commands?limit=$limit")
+        if (epoch != null) query.append("&epoch=$epoch")
+        if (clientEpoch != null) query.append("&client_epoch=$clientEpoch")
+        return call("GET", query.toString(), token)
+    }
 
     fun result(token: String, seq: Long, payload: JSONObject): JSONObject =
         call("POST", "/v1/commands/$seq/result", token, payload)
 
     companion object {
-        const val VERSION = "android-0.9.4"
+        const val VERSION = "android-0.9.5"
+
+        /** The platform this client runs on: the server shows it in the panel. */
+        const val PLATFORM = "android"
     }
 }
 
-class ApiException(val status: Int, override val message: String) : Exception(message)
+class ApiException(
+    val status: Int,
+    override val message: String,
+    /** The server's machine-readable refusal, for example `epoch-mismatch`. */
+    val code: String? = null,
+) : Exception(message)

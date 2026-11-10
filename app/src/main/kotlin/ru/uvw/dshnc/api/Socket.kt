@@ -9,37 +9,39 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * The node's channel: the WebSocket over which the server says "there is work".
+ * The node's channel: a WebSocket with exactly two frames, `state` and `ping`.
  *
- * Ping here is not for commands but for noticing a break: the server answers `pong`,
- * and that tells whether the channel is alive. Commands are fetched by a request only
- * after a `state` frame — that is, strictly by state, not by a timer.
+ * `{t:'state', epoch, client_epoch, max_commandno}` is "I am waiting": my generation, my
+ * connection counter and my own last command number. It replaces the old `hello`,
+ * `check_state` and the `known` cursor — there is no handshake frame and no cursor any
+ * more. `{t:'ping', no}` checks that the server is alive.
  *
- * `check_state` is a request saying "I am waiting": the server sends `state` only to
- * those who made it, otherwise the messages would pile up on its side.
+ * The numbers are read at the moment of sending, not captured at connect time: a snapshot
+ * taken once would make the node look lagging forever.
+ *
+ * The token travels as a subprotocol, in the `Sec-WebSocket-Protocol` header — never in the
+ * URL, where proxies and history would keep it.
  */
 class Socket(
     private val base: String,
     private val token: String,
-    private val proto: Int = 1,
-    private val onWake: () -> Unit,
-    private val onOpen: () -> Unit,
-    private val onClose: (String) -> Unit,
+    /** The server generation this node knows, or null when it knows none. */
+    private val epoch: () -> Long? = { null },
+    /** The persistent per-connection counter (`client_epoch` on the wire). */
+    private val clientEpoch: () -> Long? = { null },
+    /** The highest command number this process executed. */
+    private val maxCommandno: () -> Long = { 0L },
+    /** A `state` frame from the server: the generation and the number it named. */
+    private val onState: (Long?, Long?) -> Unit = { _, _ -> },
+    private val onOpen: () -> Unit = {},
+    /**
+     * The channel closed. The code and the reason are the server's words: `4409` and
+     * `4001 client-epoch` mean the reset, `4001 replaced` means this instance is the older
+     * one and has to stop.
+     */
+    private val onClose: (Int, String) -> Unit = { _, _ -> },
+    /** The answer to our ping: the delay in milliseconds, 0 when it cannot be computed. */
     private val onPong: (Long) -> Unit = {},
-    /** The first allowed root: the server shows it in the panel and keeps session dirs there. */
-    private val workdir: String? = null,
-    /** The permission ceiling of the node: there is no sandbox on the phone, so `full`. */
-    private val access: String = "full",
-    /** Whether a human can be asked: no dialog here, so `none`. */
-    private val approver: String = "none",
-    /** The narrowest mode a command may run in — the same value as in `announce`. */
-    private val startMode: String = "full",
-    /** How long the node has been running: the server translates it into its own clock. */
-    private val uptimeSeconds: () -> Long = { 0L },
-    /** The server generation the node remembers; null — it knows none yet. */
-    private val epoch: Long? = null,
-    /** The server said the generation changed: the epoch reset has to be applied. */
-    private val onReconnect: (Long?) -> Unit = {},
 ) {
     private val client = OkHttpClient.Builder()
         // Protocol-level ping: OkHttp sends ping frames itself and drops
@@ -57,29 +59,19 @@ class Socket(
     @Volatile var lastPong: Long = 0L
 
     /** When each ping went out: used to compute the answer delay. */
-    private val sentAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val sentAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
 
-    fun connect (conn: Long? = null, known: Long = 0L) {
+    fun connect() {
         val url = base.replaceFirst("http", "ws").trimEnd('/') + "/v1/ws"
         val request = Request.Builder().url(url).header("sec-websocket-protocol", token).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                // The hello carries the same fields as `announce`: the server updates the
-                // node card from it before the announcement arrives, otherwise they land
-                // one step later and the panel shows a half-truth for a while.
-                val hello = JSONObject()
-                    .put("t", "hello")
-                    .put("proto", proto)
-                    .put("known", declaration.hello(known) ?: JSONObject.NULL)
-                    .put("conn", conn ?: JSONObject.NULL)
-                    .put("epoch", epoch ?: JSONObject.NULL)
-                    .put("workdir", workdir ?: JSONObject.NULL)
-                    .put("access", access)
-                    .put("allowEscalation", false)
-                    .put("approver", approver)
-                    .put("base", startMode)
-                    .put("uptimeSeconds", uptimeSeconds())
-                webSocket.send(hello.toString())
+                // The very first frame is "I am waiting": the server sends nothing to a node
+                // that has not declared its state, otherwise the messages would pile up on
+                // its side. The announce has already settled the generation, so the number
+                // in this frame is the current one, not a stale copy.
+                sendState(webSocket)
+                onOpen()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -89,77 +81,58 @@ class Socket(
                     return
                 }
                 when (frame.optString("t")) {
-                    "hello-ok" -> {
-                        // we declare our wait right away: without it the server has no right
-                        // to send the frame, even if there is already work. This frame is
-                        // the one the server reads the restart from, so the very first
-                        // `check_state` of a fresh process carries `known: null`
-                        val cursor = declaration.checkState(known)
-                        webSocket.send(JSONObject().put("t", "check_state").put("known", cursor ?: JSONObject.NULL).toString())
-                        // the server keeps its generation: a different one means it restarted
-                        // while we were away, and the epoch the node remembers is stale
-                        if (frame.optBoolean("reconnect", false)) onReconnect(frame.optLong("epoch", 0L))
-                        onOpen()
+                    "state" -> {
+                        // the fields may be absent: an absent generation is "not named",
+                        // not zero, and the difference decides between adopt and reset
+                        val seen = if (frame.has("epoch") && !frame.isNull("epoch")) frame.optLong("epoch") else null
+                        val number =
+                            if (frame.has("max_commandno") && !frame.isNull("max_commandno")) frame.optLong("max_commandno") else null
+                        onState(seen, number)
                     }
                     "pong" -> {
-                        // answer time and delay: the id came back the same one that went out,
-                        // so RTT is computed from our own send
+                        // the number came back the same one that went out, so RTT is
+                        // computed from our own send
                         val now = System.currentTimeMillis()
                         lastPong = now
-                        val sent = sentAt.remove(frame.opt("id")?.toString())
+                        val sent = sentAt.remove(frame.optInt("no"))
                         onPong(if (sent == null) 0 else now - sent)
                     }
-                    "state" -> onWake()
-                    "ping" -> webSocket.send(JSONObject().put("t", "pong").put("id", frame.opt("id")).toString())
+                    // Nothing else exists on this socket: `state` and `pong` are the whole
+                    // server vocabulary, and an unknown frame is not worth inventing an
+                    // answer for
                 }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                onClose("сбой: ${t.message ?: t.javaClass.simpleName}")
+                onClose(CLOSE_FAILURE, "сбой: ${t.message ?: t.javaClass.simpleName}")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                onClose("код $code ${reason.ifBlank { "без причины" }}")
+                onClose(code, reason)
             }
         })
     }
 
     /**
-     * Tell the server "I am waiting again" after a batch is processed.
-     *
-     * While the restart declaration is still owed, this frame carries it — the same rule
-     * as on the desktop: the declaration must not be lost because a wait frame happened to
-     * come first.
+     * Say "I am waiting" again — after a batch is processed, or when the loop is about to
+     * sleep. The epoch and the counter are read right here, at the moment of sending.
      */
-    fun waiting(known: Long?) {
-        // nothing to send on: the declaration must not be spent, the next hello carries it
-        val target = socket ?: return
-        val value = if (declaration.announced()) known else declaration.checkState(known ?: 0L)
-        target.send(JSONObject().put("t", "check_state").put("known", value ?: JSONObject.NULL).toString())
+    fun sendState() {
+        socket?.let { sendState(it) }
     }
 
-    /** Whether the one-shot declaration has already gone out: the first command waits for it. */
-    fun announced(): Boolean = declaration.announced()
-
-    /**
-     * Say "I restarted" again — used when the server generation changed, not on an
-     * ordinary start.
-     *
-     * Everything the old generation had already handed out died together with it, and
-     * leaving those commands in `processing` until the timeout is a lie. Said once, in one
-     * frame: if this connection drops before the server hears us, the declaration is still
-     * owed and the next connection repeats it in its hello.
-     */
-    fun declareRestart() {
-        declaration.restart()
-        val target = socket ?: return
-        val value = declaration.checkState(0L)
-        target.send(JSONObject().put("t", "check_state").put("known", value ?: JSONObject.NULL).toString())
+    private fun sendState(target: WebSocket) {
+        target.send(JSONObject()
+            .put("t", "state")
+            .put("epoch", epoch() ?: JSONObject.NULL)
+            .put("client_epoch", clientEpoch() ?: JSONObject.NULL)
+            .put("max_commandno", maxCommandno())
+            .toString())
     }
 
-    fun ping(id: Int) {
-        sentAt[id.toString()] = System.currentTimeMillis()
-        socket?.send(JSONObject().put("t", "ping").put("id", id).toString())
+    fun ping(no: Int) {
+        sentAt[no] = System.currentTimeMillis()
+        socket?.send(JSONObject().put("t", "ping").put("no", no).toString())
     }
 
     fun close() {
@@ -168,10 +141,7 @@ class Socket(
     }
 
     companion object {
-        /**
-         * The declaration lives in the process, not in a connection: a reconnect keeps the
-         * same process and the same running commands.
-         */
-        private val declaration = ru.uvw.dshnc.logic.Declaration()
+        /** Not a protocol code: our own mark for "the socket broke without the server's word". */
+        const val CLOSE_FAILURE = 0
     }
 }
