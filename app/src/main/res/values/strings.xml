@@ -11,6 +11,8 @@
     <string name="status_connected">Connected</string>
     <string name="perm_title">Permissions</string>
     <string name="perm_notifications">Notifications</string>
+    <string name="popup_allowed">Questions pop up: allowed</string>
+    <string name="popup_denied">Questions pop up: denied — tap here to allow</string>
     <string name="status_off">Off</string>
     <string name="status_bad_link">a link like https://host/pair?v=… is needed</string>
     <string name="status_no_token">the server did not issue a token</string>

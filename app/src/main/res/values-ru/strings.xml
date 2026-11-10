@@ -9,6 +9,8 @@
     <string name="status_connected">Соединено</string>
     <string name="perm_title">Разрешения</string>
     <string name="perm_notifications">Уведомления</string>
+    <string name="popup_allowed">Вопросы всплывают: разрешено</string>
+    <string name="popup_denied">Вопросы всплывают: запрещено — нажми, чтобы разрешить</string>
     <string name="status_off">Выключено</string>
     <string name="status_bad_link">нужна ссылка вида https://адрес/pair?v=…</string>
     <string name="status_no_token">сервер не выдал токен</string>

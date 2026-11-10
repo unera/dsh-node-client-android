@@ -142,6 +142,22 @@ class AskActivity : AppCompatActivity() {
             addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         card.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // a cut-off line at the bottom looks like a bug, so the text fades out while there is
+        // more of it: the fade disappears at the very end, when nothing is left to scroll
+        val fade = View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.TRANSPARENT, DialogHub.styleColor(request.style)),
+            )
+            visibility = View.GONE
+        }
+        card.addView(fade, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(28)).apply {
+            setMargins(0, -dp(28), 0, 0)
+        })
+        scroll.setOnScrollChangeListener { _, _, _, _, _ ->
+            fade.visibility = if (scroll.canScrollVertically(1)) View.VISIBLE else View.GONE
+        }
+        scroll.post { fade.visibility = if (scroll.canScrollVertically(1)) View.VISIBLE else View.GONE }
 
         val buttons = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
