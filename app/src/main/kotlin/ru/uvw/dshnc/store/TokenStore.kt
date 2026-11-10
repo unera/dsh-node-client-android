@@ -114,6 +114,17 @@ class TokenStore(private val context: Context) {
         get() = read("lastRtt")?.toLongOrNull() ?: 0L
         set(value) = write("lastRtt", value.toString())
 
+    /**
+     * The server generation the node remembers.
+     *
+     * A new `epoch` means the server restarted: everything it had already issued to this
+     * node died together with the old generation, so the cursor is worthless and the
+     * restart has to be declared again. `-1` — nothing is known yet (a fresh install).
+     */
+    var epoch: Long
+        get() = read("epoch")?.toLongOrNull() ?: -1L
+        set(value) = write("epoch", value.toString())
+
     fun path(): String = file.absolutePath
 
     /** What is stored — for the diagnostics screen. */

@@ -148,7 +148,7 @@ class NodeService : Service() {
         val transfer = TransferApi(base, token)
         while (true) {
             try {
-                api.announce(token, apis, uptimeSeconds(), TokenStore(this).roots.firstOrNull())
+                api.announce(token, apis, uptimeSeconds(), TokenStore(this).roots.firstOrNull(), SessionApi.rules())
                 runCatching { TokenStore(this@NodeService).connected = true }
                 notify(getString(R.string.status_connected))
                 // work arrives as a frame: we bring the channel up and wait
@@ -156,6 +156,19 @@ class NodeService : Service() {
                     base = base,
                     token = token,
                     onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications, device, shell) }; channelRef?.waiting(known) } },
+                    // the same values `announce` sends: the server updates the node card from
+                    // the hello, before the announcement arrives
+                    workdir = TokenStore(this).roots.firstOrNull(),
+                    access = "full",
+                    approver = "none",
+                    startMode = "full",
+                    uptimeSeconds = { uptimeSeconds() },
+                    epoch = TokenStore(this).epoch.takeIf { it >= 0 },
+                    onReconnect = { serverEpoch ->
+                        // the server restarted: what it had issued to us is not executable any
+                        // more, so the cursor is dropped and the restart is declared again
+                        rememberEpoch(serverEpoch)
+                    },
                     onOpen = {
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
                         runCatching { notify(getString(R.string.status_connected)) }
@@ -267,10 +280,17 @@ class NodeService : Service() {
             val answer = api.commands(token)
             // the liveness mark: the screen will show that the service really works
             runCatching { TokenStore(this@NodeService).heartbeat = System.currentTimeMillis() }
+            // the server generation: a different one means the server restarted and
+            // everything it had issued to this node died with the previous generation
+            serverEpoch(answer)?.let { epoch -> rememberEpoch(epoch) }
             val batch = answer.optJSONArray("commands") ?: JSONArray()
             for (index in 0 until batch.length()) {
                 val command = batch.getJSONObject(index)
                 val seq = command.optLong("seq")
+                // the command's own pause set by the server, in seconds: arguments win over
+                // it, but without it a method falls back to its default and the server
+                // waits for an answer it has already given up on
+                val commandSeconds = if (command.has("timeout")) command.optDouble("timeout", 0.0) else 0.0
                 // we have not declared a single API yet, so we honestly answer that the
                 // method is unknown: silence would look like a hang
                 val method = command.optString("method")
@@ -284,10 +304,10 @@ class NodeService : Service() {
                     method.startsWith("#") -> shell.control(method, args)
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
-                    method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args)
-                    method == "exec" -> shell.handle(method, args, seq)
-                    method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
-                    method == "copyFromDevice" -> transfer.upload(command.optLong("seq"), args)
+                    method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args, commandSeconds)
+                    method == "exec" -> shell.handle(method, args, seq, commandSeconds)
+                    method == "copyToDevice" -> transfer.download(seq, args, commandSeconds)
+                    method == "copyFromDevice" -> transfer.upload(seq, args, commandSeconds)
                     else -> files.handle(method, args)
                 }
                 // `ok` is a mandatory field: the server decides from it whether this is a
@@ -326,6 +346,33 @@ class NodeService : Service() {
     /** `max_commandno` — the last command number the server has spent — if it sent one. */
     private fun maxCommandno(answer: JSONObject): Long? =
         if (answer.has("max_commandno") && !answer.isNull("max_commandno")) answer.optLong("max_commandno") else null
+
+    /** The generation of the server process that answered — if it named one. */
+    private fun serverEpoch(answer: JSONObject): Long? =
+        if (answer.has("epoch") && !answer.isNull("epoch")) answer.optLong("epoch") else null
+
+    /**
+     * Remember the server generation; a real change means the node is on its own.
+     *
+     * The numbers the old generation issued mean nothing any more, so the cursor is
+     * dropped and the restart is declared again: the server then closes what it had already
+     * handed out instead of holding it in `processing` until the timeout. `-1` in the store
+     * is "we know no generation yet" — the first start is not a change, and there the
+     * restart travels in the hello frame anyway.
+     */
+    private fun rememberEpoch(epoch: Long?) {
+        if (epoch == null || epoch <= 0) return
+        val store = TokenStore(this)
+        val previous = store.epoch
+        if (previous == epoch) return
+        store.epoch = epoch
+        // the first generation we ever see is not a change: the restart travels in the
+        // hello frame, and there are no commands of ours for the server to close
+        if (previous < 0) return
+        runCatching { store.addEvent("epoch", "$previous → $epoch") }
+        known = 0L
+        channelRef?.declareRestart()
+    }
 
     /**
      * Accept the number the server named.

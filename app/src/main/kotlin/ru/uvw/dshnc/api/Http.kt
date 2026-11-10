@@ -63,14 +63,15 @@ class NodeApi(private val base: String) {
      *
      * The field set is the desktop one, and the values say the truth about the phone:
      * there is no sandbox here, so the cap and the start mode are both `full`; there is
-     * no approval dialog, so `approver` is `none` and escalation is off. `applyRules` is
-     * empty: this client binds no special rules.
+     * no approval dialog, so `approver` is `none` and escalation is off. `applyRules`
+     * carries the rules the node binds (`SessionApi.rules`).
      */
     fun announce(
         token: String,
         apis: JSONArray,
         uptimeSeconds: Long,
         workdir: String?,
+        applyRules: JSONArray = JSONArray(),
         access: String = "full",
         allowEscalation: Boolean = false,
         approver: String = "none",
@@ -78,7 +79,7 @@ class NodeApi(private val base: String) {
     ): JSONObject = call(
         "PUT", "/v1/announce", token, JSONObject()
             .put("apis", apis)
-            .put("applyRules", JSONArray())
+            .put("applyRules", applyRules)
             .put("proto", 1)
             .put("clientVersion", VERSION)
             .put("workdir", workdir ?: JSONObject.NULL)

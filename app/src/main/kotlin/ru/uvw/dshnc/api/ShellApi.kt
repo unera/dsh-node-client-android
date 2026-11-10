@@ -3,6 +3,7 @@ package ru.uvw.dshnc.api
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
+import ru.uvw.dshnc.logic.Timeouts
 
 /**
  * Running a shell command on the phone.
@@ -50,18 +51,16 @@ class ShellApi (private val roots: List<String>) {
                 .put("required", org.json.JSONArray().put("command")))
             .put("returns", "object")))
 
-    fun handle (method: String, args: JSONObject, seq: Long = 0L): JSONObject {
+    fun handle (method: String, args: JSONObject, seq: Long = 0L, commandSeconds: Double = 0.0): JSONObject {
         if (method != "exec") return err("unknown_method", "нет такого метода: $method")
         val command = args.optString("command").trim()
         if (command.isEmpty()) return err("bad_args", "нужна команда")
         val cwd = args.optString("cwd").ifBlank { roots.firstOrNull() ?: "/storage/emulated/0" }
         if (!allowed(cwd)) return err("path_denied", "каталог $cwd вне разрешённых: ${roots.joinToString(", ")}")
-        // same as on the desktop: `timeout` is in seconds; `timeoutMs` is kept for explicitness
-        val timeout = if (args.has("timeoutMs")) {
-            args.optInt("timeoutMs", 15_000)
-        } else {
-            (args.optDouble("timeout", 15.0) * 1000).toInt()
-        }.coerceIn(1_000, 120_000)
+        // like on the desktop: `timeoutMs`, then `timeout` in seconds from the arguments,
+        // then the `timeout` the server set for the command, then our own default
+        val timeout = (Timeouts.resolveMs(args, commandSeconds) ?: DEFAULT_TIMEOUT_MS)
+            .coerceIn(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
         val started = System.currentTimeMillis()
         return try {
             val process = ProcessBuilder("/system/bin/sh", "-c", command)
@@ -207,6 +206,10 @@ class ShellApi (private val roots: List<String>) {
     companion object {
         private const val LIMIT = 64 * 1024
         private const val ERR_LIMIT = 16 * 1024
+        /** The pause of `exec` when neither the arguments nor the server named one. */
+        private const val DEFAULT_TIMEOUT_MS = 15_000
+        private const val MIN_TIMEOUT_MS = 1_000
+        private const val MAX_TIMEOUT_MS = 120_000
         /** How long a cancelled process is given to die on SIGTERM. */
         private const val CANCEL_WAIT_MS = 2000L
         /** How long the FLUSH barrier waits for the registry to drain. */

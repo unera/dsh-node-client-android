@@ -17,6 +17,21 @@ import ru.uvw.dshnc.store.TokenStore
  */
 class SessionApi(private val context: Context) {
     companion object {
+        /**
+         * The special rules this API binds (`announce.applyRules`).
+         *
+         * `ping` is measured by the server itself: the duration by its own marks, the clock
+         * skew by `now` from the result envelope. Without a binding the numbers are
+         * computed into nowhere, and `now` is worth nothing (spec/SPECIAL-RULES.md).
+         */
+        fun rules(): JSONArray = JSONArray().put(JSONObject()
+            .put("api", "session")
+            .put("method", "ping")
+            .put("rule", "timing")
+            .put("rulesOpts", JSONObject().put("retNames", JSONObject()
+                .put("durationMs", "durationMs")
+                .put("clockSkewMs", "clockSkewMs"))))
+
         fun schema(): JSONObject = JSONObject()
             .put("name", "session")
             .put("version", NodeApi.VERSION)
