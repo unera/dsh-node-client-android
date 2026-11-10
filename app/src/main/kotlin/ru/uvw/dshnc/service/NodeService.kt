@@ -32,6 +32,7 @@ import ru.uvw.dshnc.api.TransferApi
 import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.logic.Action
 import ru.uvw.dshnc.logic.Generation
+import ru.uvw.dshnc.logic.Revival
 import ru.uvw.dshnc.store.TokenStore
 
 /**
@@ -121,13 +122,17 @@ class NodeService : Service() {
         }
         // every service start is a trace: it shows that the process was killed
         store.starts = store.starts + 1
-        // turned off by the person — no network, even if someone tries to bring it up
-        if (!store.enabled) {
+        val base = store.base
+        val token = store.token
+        // turned off by the person, or displaced by a newer instance of the same node: no
+        // network either way. The displaced case is decided by the persisted flag, so nothing
+        // else resurrects this instance — not the sticky restart, not an explicit start, not
+        // the ten-minute alarm; otherwise the two instances ping-pong, each reviving the one
+        // the other displaced. Only a person turning the node on clears it.
+        if (!Revival.allowed(store.enabled, token != null, store.replaced)) {
             stopSelf()
             return START_NOT_STICKY
         }
-        val base = store.base
-        val token = store.token
         if (base == null || token == null) {
             stopSelf()
             return START_NOT_STICKY
@@ -291,6 +296,9 @@ class NodeService : Service() {
         when (Generation.onClose(code, reason)) {
             Action.STOP -> {
                 runCatching { TokenStore(this).addEvent("replaced", text) }
+                // persist it before stopping: stopping alone means nothing, the ten-minute
+                // alarm revives the process and the two instances ping-pong forever
+                runCatching { TokenStore(this).replaced = true }
                 stopRequested = true
             }
             Action.RESET -> resetGeneration(text)

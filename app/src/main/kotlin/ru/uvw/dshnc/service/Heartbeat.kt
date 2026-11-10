@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import ru.uvw.dshnc.logic.Revival
 import ru.uvw.dshnc.store.TokenStore
 
 /**
@@ -19,8 +20,11 @@ import ru.uvw.dshnc.store.TokenStore
 class Heartbeat : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val store = TokenStore(context)
-        // do not wake up while paused: the person turned the node off themselves
-        if (store.token != null && store.enabled) NodeService.start(context)
+        // do not wake up while paused: the person turned the node off themselves.
+        // Nor while displaced: a newer instance of this node holds the channel, and waking
+        // up would push it out — the two instances would ping-pong every ten minutes, each
+        // reviving the one the other displaced. Only a person clears that flag.
+        if (Revival.allowed(store.enabled, store.token != null, store.replaced)) NodeService.start(context)
         schedule(context)
     }
 
