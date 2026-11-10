@@ -39,18 +39,31 @@ class Socket(
 
     private var socket: WebSocket? = null
 
+    /**
+     * Whether this process still owes the server the "I restarted" frame.
+     *
+     * `known: null` means for the server "everything you issued to me died with the
+     * process": it closes those commands as `node_restarted`. Said once — while it is
+     * repeated in every frame, the batch that has just been handed out is closed too,
+     * and a live command dies a hundred milliseconds after it was issued. The flag is
+     * per process, not per connection: a reconnect keeps the same process and the same
+     * running commands.
+     */
+    private var fresh = !restartDeclared.get()
+
     /** Time of the last answer to a ping: the channel is alive regardless of commands. */
     @Volatile var lastPong: Long = 0L
 
     /** When each ping went out: used to compute the answer delay. */
     private val sentAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    fun connect (conn: Long? = null) {
+    fun connect (conn: Long? = null, known: Long = 0L) {
         val url = base.replaceFirst("http", "ws").trimEnd('/') + "/v1/ws"
         val request = Request.Builder().url(url).header("sec-websocket-protocol", token).build()
+        val cursor = if (fresh) JSONObject.NULL else known
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send(JSONObject().put("t", "hello").put("proto", proto).put("known", JSONObject.NULL).put("conn", conn ?: JSONObject.NULL).toString())
+                webSocket.send(JSONObject().put("t", "hello").put("proto", proto).put("known", cursor).put("conn", conn ?: JSONObject.NULL).toString())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -63,7 +76,12 @@ class Socket(
                     "hello-ok" -> {
                         // we declare our wait right away: without it the server has no right
                         // to send the frame, even if there is already work
-                        webSocket.send(JSONObject().put("t", "check_state").put("known", JSONObject.NULL).toString())
+                        val state = JSONObject()
+                            .put("t", "check_state")
+                            .put("known", if (fresh) JSONObject.NULL else known)
+                        fresh = false
+                        restartDeclared.set(true)
+                        webSocket.send(state.toString())
                         onOpen()
                     }
                     "pong" -> {
@@ -102,5 +120,10 @@ class Socket(
     fun close() {
         socket?.close(1000, "bye")
         socket = null
+    }
+
+    companion object {
+        /** Set once the process has declared its restart: a reconnect must not repeat it. */
+        private val restartDeclared = java.util.concurrent.atomic.AtomicBoolean(false)
     }
 }

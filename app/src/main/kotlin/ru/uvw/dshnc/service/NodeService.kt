@@ -148,7 +148,7 @@ class NodeService : Service() {
         val transfer = TransferApi(base, token)
         while (true) {
             try {
-                api.announce(token, apis, uptimeSeconds())
+                api.announce(token, apis, uptimeSeconds(), TokenStore(this).roots.firstOrNull())
                 runCatching { TokenStore(this@NodeService).connected = true }
                 notify(getString(R.string.status_connected))
                 // work arrives as a frame: we bring the channel up and wait
@@ -191,7 +191,7 @@ class NodeService : Service() {
                 channelOpen = false
                 val connNumber = TokenStore(this@NodeService).nextConnection()
                 runCatching { TokenStore(this@NodeService).addEvent("соединение", "№$connNumber") }
-                channel.connect(connNumber)
+                channel.connect(connNumber, known)
                 // we wait for the opening: otherwise the wait loop exits right away
                 delay(500)
                 if (!channelOpen) delay(RECONNECT_MS)
@@ -270,17 +270,22 @@ class NodeService : Service() {
             val batch = answer.optJSONArray("commands") ?: JSONArray()
             for (index in 0 until batch.length()) {
                 val command = batch.getJSONObject(index)
+                val seq = command.optLong("seq")
                 // we have not declared a single API yet, so we honestly answer that the
                 // method is unknown: silence would look like a hang
                 val method = command.optString("method")
                 val args = command.optJSONObject("args") ?: JSONObject()
                 // we tell the session.* and files.* methods apart by the prefix and by the
-                // known names: the server sends the method name, not "api.method"
+                // known names: the server sends the method name, not "api.method".
+                // Service commands go first: they come with `api = -1` and a name starting
+                // with `#`, are handled by the client itself and must not fall through to
+                // `files`
                 val outcome = when {
+                    method.startsWith("#") -> shell.control(method, args)
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
                     method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args)
-                    method == "exec" -> shell.handle(method, args)
+                    method == "exec" -> shell.handle(method, args, seq)
                     method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
                     method == "copyFromDevice" -> transfer.upload(command.optLong("seq"), args)
                     else -> files.handle(method, args)
@@ -301,13 +306,38 @@ class NodeService : Service() {
                         .put("code", outcome.optString("code"))
                         .put("message", outcome.optString("message"))
                 }
-                api.result(token, command.optLong("seq"), payload)
+                // our own clock in the envelope: the server's `timing` rule computes
+                // durationMs and clockSkewMs from it — without `now` its `nodeNow` is null
+                // and the rule is half-blind
+                payload.put("now", System.currentTimeMillis())
+                api.result(token, seq, payload)
                 executed.incrementAndGet()
-                known = maxOf(known, command.optLong("seq"))
+                known = maxOf(known, seq)
             }
+            // The queue is exhausted — only now can the server's number be accepted in
+            // full. Accepting it earlier is impossible: commands with smaller numbers may
+            // still stand in the queue, and "I know up to N" would leave them undelivered.
+            if (batch.length() == 0) known = adoptMaxCommandno(known, maxCommandno(answer))
             // the batch is over: from here we wait for a frame instead of spinning the loop
             return
         }
+    }
+
+    /** `max_commandno` — the last command number the server has spent — if it sent one. */
+    private fun maxCommandno(answer: JSONObject): Long? =
+        if (answer.has("max_commandno") && !answer.isNull("max_commandno")) answer.optLong("max_commandno") else null
+
+    /**
+     * Accept the number the server named.
+     *
+     * `known` is not "the maximum of the numbers received" but "up to which number I am
+     * aware": the numbers are an honest autoincrement and are never reused, so the
+     * server's number also closes the holes — a cancelled command has spent a number and
+     * will never come to the node.
+     */
+    private fun adoptMaxCommandno(current: Long, named: Long?): Long {
+        if (named == null) return current
+        return maxOf(current, named)
     }
 
     /**
