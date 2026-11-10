@@ -6,18 +6,18 @@ import java.io.File
 import ru.uvw.dshnc.api.Roots
 
 /**
- * Состояние узла: адрес сервера и токен.
+ * Node state: the server address and the token.
  *
- * Пишем в два места сразу — в обычные настройки и в файл, — и читаем из того,
- * где что-то есть. На этом телефоне по очереди «пропадали» и шифрованное
- * хранилище, и настройки, и файл, поэтому одного места мало: пока не понятно,
- * что именно теряется, дешевле хранить дважды и не терять подключение.
+ * We write to two places at once — ordinary settings and a file — and read from
+ * whichever has something. On this phone the encrypted store, the settings and the file
+ * "disappeared" one after another, so one place is not enough: until it is clear what
+ * exactly is being lost, it is cheaper to store twice than to lose the connection.
  */
 class TokenStore(private val context: Context) {
     private val file = File(context.filesDir, "state.json")
     private val prefs = context.getSharedPreferences("dshnc-state", Context.MODE_PRIVATE)
 
-    /** Последняя ошибка записи: показываем на экране, чтобы не гадать. */
+    /** The last write error: shown on the screen so that we do not have to guess. */
     var lastError: String? = null
         private set
 
@@ -59,22 +59,22 @@ class TokenStore(private val context: Context) {
         get() = read("name")
         set(value) = write("name", value)
 
-    /** Постоянный идентификатор устройства: сервер узнаёт по нему узел. */
+    /** Permanent device identifier: the server recognises the node by it. */
     var deviceId: String?
         get() = read("uuid")
         set(value) = write("uuid", value)
 
     /**
-     * Отметка «служба жива»: время последнего успешного опроса.
+     * The "service is alive" mark: the time of the last successful poll.
      *
-     * Без неё «Нет связи» одинаково выглядит и когда служба не поднялась, и
-     * когда она работает, но сервер молчит. По отметке это видно сразу.
+     * Without it "No connection" looks the same both when the service did not come up
+     * and when it runs but the server is silent. The mark makes that visible at once.
      */
     var heartbeat: Long
         get() = read("heartbeat")?.toLongOrNull() ?: 0L
         set(value) = write("heartbeat", value.toString())
 
-    /** Связь установлена: экран показывает «Соединено» вместо «Соединяюсь…». */
+    /** The link is established: the screen shows "Connected" instead of "Connecting…". */
     var connected: Boolean
         get() = read("connected") == "1"
         set(value) = write("connected", if (value) "1" else null)
@@ -87,7 +87,7 @@ class TokenStore(private val context: Context) {
         get() = read("pingFactor")?.toIntOrNull() ?: 10
         set(value) = write("pingFactor", value.toString())
 
-    /** Запасной опрос: 0 — только по кадру. */
+    /** Fallback polling: 0 — frame-driven only. */
     var pollFallback: Int
         get() = read("poll")?.toIntOrNull() ?: 0
         set(value) = write("poll", value.toString())
@@ -99,24 +99,24 @@ class TokenStore(private val context: Context) {
         }
         set(value) = write("roots", value.joinToString("\n"))
 
-    /** Разрешён ли `session.debug_info`: по умолчанию нет. */
+    /** Whether `session.debug_info` is allowed: off by default. */
     var debugInfo: Boolean
         get() = read("debug") == "1"
         set(value) = write("debug", if (value) "1" else null)
 
-    /** Когда пришёл последний `pong`: показывает, жив ли канал сам по себе. */
+    /** When the last `pong` came: shows whether the channel is alive on its own. */
     var lastPong: Long
         get() = read("lastPong")?.toLongOrNull() ?: 0L
         set(value) = write("lastPong", value.toString())
 
-    /** Задержка последнего пинга в миллисекундах. */
+    /** The delay of the last ping in milliseconds. */
     var lastRtt: Long
         get() = read("lastRtt")?.toLongOrNull() ?: 0L
         set(value) = write("lastRtt", value.toString())
 
     fun path(): String = file.absolutePath
 
-    /** Что записано — для экрана диагностики. */
+    /** What is stored — for the diagnostics screen. */
     fun dump(): String = "файл: ${file.absolutePath}\n" +
         "адрес: ${base ?: "—"}\n" +
         "токен: ${token?.let { "есть (${it.take(6)}…)" } ?: "—"}\n" +
@@ -126,50 +126,51 @@ class TokenStore(private val context: Context) {
         (lastError?.let { "\nошибка: $it" } ?: "")
 
     /**
-     * Узел включён человеком. Выключено — значит никакой сетевой активности:
-     * служба не поднимается, будильник не будит, запросов нет вовсе.
+     * The node was turned on by the person. Off means no network activity at all:
+     * the service does not come up, the alarm does not wake anything, there are no
+     * requests whatsoever.
      */
     var enabled: Boolean
         get() = read("enabled") == "1"
         set(value) = write("enabled", if (value) "1" else null)
 
 
-    /** Сколько раз службу будили заново: видно, что процесс умирал. */
+    /** How many times the service was woken from scratch: shows that the process died. */
     var starts: Int
         get() = read("starts")?.toIntOrNull() ?: 0
         set(value) = write("starts", value.toString())
 
     /**
-     * Заморозки: система усыпила процесс, а потом разбудила.
+     * Freezes: the system put the process to sleep and then woke it up.
      *
-     * Храним последние записи, чтобы можно было ответить на вопрос «почему узел
-     * пропадал» фактами, а не догадками. Формат записи: `<когда>:<сколько мс>`.
+     * We keep the latest records so that "why did the node disappear" can be answered
+     * with facts rather than guesses. Record format: `<when>:<how many ms>`.
      */
     var freezes: List<String>
         get() = read("freezes")?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
         set(value) = write("freezes", value.takeLast(10).joinToString(","))
 
     /**
-     * Журнал событий узла: подключились, отключились, ошибка, ушли в фон.
+     * The node's event log: connected, disconnected, an error, went to the background.
      *
-     * Храним последние записи — по ним видно, что именно случилось, вместо
-     * догадок «наверное, уснул» или «наверное, сеть».
+     * We keep the latest records — they show what exactly happened, instead of guesses
+     * like "probably fell asleep" or "probably the network".
      */
     var events: List<String>
         get() = read("events")?.split('|')?.filter { it.isNotBlank() } ?: emptyList()
         set(value) = write("events", value.takeLast(60).joinToString("|"))
 
-    /** Записать событие: вид и короткая подробность. */
+    /** Record an event: its kind and a short detail. */
     fun addEvent (kind: String, detail: String = "") {
         val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
         events = events + (if (detail.isBlank()) "$stamp $kind" else "$stamp $kind: $detail")
     }
 
     /**
-     * Номер нажатия: персистентный счётчик, а не uuid.
+     * The press number: a persistent counter, not a uuid.
      *
-     * По нему сервер отличает повтор одной и той же отправки от нового
-     * нажатия. Растёт всегда и переживает перезапуск приложения.
+     * The server uses it to tell a retry of the same send from a new press. It always
+     * grows and survives an app restart.
      */
     fun nextPress (): Long {
         val value = (read("press")?.toLongOrNull() ?: 0L) + 1
@@ -178,10 +179,10 @@ class TokenStore(private val context: Context) {
     }
 
     /**
-     * Номер соединения: увеличивается перед каждым подключением.
+     * The connection number: incremented before every connect.
      *
-     * Сервер по нему решает, какое соединение оставить. Без него два цикла на
-     * одном устройстве выбивают друг друга, и «онлайн» мигает.
+     * The server uses it to decide which connection to keep. Without it two cycles on
+     * one device knock each other out, and "online" flickers.
      */
     fun nextConnection (): Long {
         val value = (read("conn")?.toLongOrNull() ?: 0L) + 1
@@ -189,16 +190,16 @@ class TokenStore(private val context: Context) {
         return value
     }
 
-    /** Записать заморозку длиной в `ms`. */
+    /** Record a freeze lasting `ms`. */
     fun addFreeze (ms: Long) {
         if (ms < 1000) return
         freezes = freezes + "${System.currentTimeMillis()}:$ms"
     }
 
     fun clear() {
-        // адрес и личность устройства остаются: «забыть подключение» — это про
-        // токен, а не про то, что телефон стал другим. Иначе на сервере плодятся
-        // дубликаты одного и того же устройства.
+        // the address and the device identity stay: "forget the connection" is about
+        // the token, not about the phone having become another phone. Otherwise
+        // duplicates of the same device pile up on the server.
         val keepBase = base
         val keepId = deviceId
         write("token", null)

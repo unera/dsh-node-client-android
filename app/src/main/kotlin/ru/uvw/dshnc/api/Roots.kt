@@ -3,16 +3,16 @@ package ru.uvw.dshnc.api
 import android.content.Context
 
 /**
- * Разрешённые каталоги: что владелец телефона отдал узлу.
+ * Allowed directories: what the phone owner gave to the node.
  *
- * Список живёт в настройках приложения и один и тот же отдаётся модели через
- * `files.roots`, а на будущее — десктопному клиенту: он сможет показывать те же
- * границы, не угадывая их.
+ * The list lives in the app settings and the very same one is handed to the model via
+ * `files.roots`, and later to the desktop client: it will be able to show the same
+ * boundaries instead of guessing them.
  */
 object Roots {
     private const val KEY = "roots"
 
-    /** Разумное умолчание: своя песочница и общие каталоги телефона. */
+    /** A sensible default: our own sandbox and the shared directories of the phone. */
     fun defaults(context: Context): List<String> = listOf(
         context.filesDir.path,
         "/storage/emulated/0/Download",
@@ -22,7 +22,7 @@ object Roots {
     fun load(context: Context): List<String> {
         val prefs = context.getSharedPreferences("dshnc-roots", Context.MODE_PRIVATE)
         val saved = prefs.getStringSet(KEY, null) ?: return defaults(context)
-        // пустой набор — это не «ничего не разрешено», а «ещё не настраивали»
+        // an empty set means "not configured yet", not "nothing is allowed"
         return if (saved.isEmpty()) defaults(context) else saved.sorted()
     }
 

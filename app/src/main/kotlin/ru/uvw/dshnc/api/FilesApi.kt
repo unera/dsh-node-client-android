@@ -6,17 +6,17 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Файловый API узла.
+ * The node's file API.
  *
- * Работает только внутри разрешённых каталогов, и первым методом отдаёт их
- * список (`roots`): модели не нужно угадывать, куда можно, — она спрашивает и
- * получает ответ. Так же это устроено в консольном клиенте, поэтому один и тот
- * же список путей годится для обеих платформ.
+ * It works only inside the allowed directories and hands their list out as its first
+ * method (`roots`): the model does not have to guess where it may go — it asks and gets
+ * the answer. The console client is arranged the same way, so the same list of paths
+ * suits both platforms.
  */
 class FilesApi(private val context: Context, private val roots: List<String>) {
 
     companion object {
-        /** Что объявляем серверу: имена и аргументы совпадают с десктопным клиентом. */
+        /** What we declare to the server: the names and arguments match the desktop client. */
         fun schema(version: String): JSONObject = JSONObject()
             .put("name", "files")
             .put("version", version)
@@ -45,7 +45,7 @@ class FilesApi(private val context: Context, private val roots: List<String>) {
         }
     }
 
-    /** Куда путь попал: null означает «вне разрешённых каталогов». */
+    /** Where the path landed: null means "outside the allowed directories". */
     private fun resolve(raw: String?): File? {
         val file = File(raw ?: return null).canonicalFile
         val ok = roots.any { root ->
@@ -145,7 +145,7 @@ class FilesApi(private val context: Context, private val roots: List<String>) {
     private fun err(code: String, message: String) = JSONObject()
         .put("status", "error").put("code", code).put("message", message)
 
-    /** Отказ с подсказкой: модель должна понять, что нужно просить доступ. */
+    /** A rejection with a hint: the model has to understand that it must ask for access. */
     private fun deny(path: String) = err(
         "path_denied",
         "путь $path вне разрешённых каталогов: " + (roots.joinToString(", ").ifBlank { "список пуст" }),

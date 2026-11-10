@@ -1,19 +1,19 @@
 package ru.uvw.dshnc.logic
 
 /**
- * Разбор ссылки подключения.
+ * Parsing of the connection link.
  *
- * Вынесено из активности, чтобы проверялось тестами: именно здесь легко
- * ошибиться (кодирование, лишние пробелы, чужой адрес), а ошибка стоит
- * «не подключается, и непонятно почему».
+ * Taken out of the activity so that tests can check it: this is exactly where it is
+ * easy to get things wrong (encoding, stray spaces, someone else's address), and a
+ * mistake costs "it will not connect, and it is not clear why".
  */
 object LinkParser {
-    /** Что вытащили из ссылки: адрес сервера и код. */
+    /** What was pulled out of the link: the server address and the code. */
     data class Parsed(val base: String, val code: String)
 
     /**
-     * @param raw строка из QR или из поля ввода
-     * @return разобранное или null, если это не ссылка подключения
+     * @param raw the string from a QR code or from the input field
+     * @return the parsed value, or null if this is not a connection link
      */
     fun parse (raw: String?): Parsed? {
         val text = raw?.trim().orEmpty()

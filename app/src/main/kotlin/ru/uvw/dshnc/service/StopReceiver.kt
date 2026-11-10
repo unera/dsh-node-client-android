@@ -6,16 +6,16 @@ import android.content.Intent
 import ru.uvw.dshnc.store.TokenStore
 
 /**
- * Кнопка «Выключить» прямо в уведомлении — как «Остановить» у v2rayTun.
+ * The "Turn off" button right in the notification — just like "Stop" in v2rayTun.
  *
- * Выключение здесь такое же, как тумблер на главном экране: состояние
- * запоминается, будильник узел больше не будит, сети нет вовсе.
+ * Turning off is the same here as the toggle on the main screen: the state is
+ * remembered, the alarm no longer wakes the node, there is no network at all.
  */
 class StopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val store = TokenStore(context)
         store.enabled = false
         NodeService.stop(context)
-        // уведомление исчезнет вместе со службой — это и есть подтверждение
+        // the notification goes away together with the service — that is the confirmation
     }
 }

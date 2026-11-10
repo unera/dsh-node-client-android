@@ -22,11 +22,11 @@ import ru.uvw.dshnc.store.TokenStore
 import java.util.UUID
 
 /**
- * Главный экран узла.
+ * The node's main screen.
  *
- * Сверху панель с меню, под ней один большой переключатель: включён — узел
- * работает и пингует, выключен — сетевой активности нет вовсе, приложение
- * только позволяет зайти в настройки и подготовить подключение.
+ * On top a panel with the menu, below it one big toggle: on — the node works and pings,
+ * off — there is no network activity at all, the app only lets one go into the settings
+ * and prepare the connection.
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var store: TokenStore
@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var linkRow: LinearLayout
     private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
 
-    /** Результат сканирования: содержимое QR — та же ссылка из админки. */
+    /** The scan result: the contents of the QR code — the same link as from the admin panel. */
     private val scanner = registerForActivityResult(
         com.journeyapps.barcodescanner.ScanContract(),
     ) { result ->
@@ -60,7 +60,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#141414"))
         }
 
-        // панель: название и вход в меню
+        // the panel: the title and the way into the menu
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -113,7 +113,7 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(status)
 
-        // что происходило: команды, пинг, задержка, версия
+        // what has been happening: commands, ping, delay, version
         details = TextView(this).apply {
             textSize = 13f
             gravity = Gravity.CENTER
@@ -121,8 +121,8 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(details)
 
-        // пока не подключено — только сканирование: ввод ссылки живёт в меню,
-        // чтобы главный экран оставался двумя кнопками и счётчиком
+        // until connected — scanning only: entering the link lives in the menu,
+        // so that the main screen stays two buttons and a counter
         linkRow = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (store.token == null) View.VISIBLE else View.GONE
@@ -142,7 +142,7 @@ class MainActivity : AppCompatActivity() {
         startTicker()
     }
 
-    /** Включение и выключение узла: выключено — сетевой активности нет. */
+    /** Turning the node on and off: off means no network activity. */
     private fun applyEnabled (on: Boolean) {
         store.enabled = on
         if (on) {
@@ -203,7 +203,7 @@ class MainActivity : AppCompatActivity() {
         }, 1000)
     }
 
-    /** Камера: разрешение спрашиваем в момент нажатия. */
+    /** Camera: the permission is requested at the moment of the press. */
     private fun startScanner () {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 7)
@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Подключение по ссылке из админки: обмен кода на токен. */
+    /** Connecting by a link from the admin panel: an exchange of the code for a token. */
     private fun pair (raw: String) {
         val parsed = ru.uvw.dshnc.logic.LinkParser.parse(raw)
         if (parsed == null) {
@@ -265,7 +265,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         linkRow.visibility = if (store.token == null) View.VISIBLE else View.GONE
-        // подключились через меню — служба должна подняться без ручного тумблера
+        // they connected through the menu — the service has to come up without the manual toggle
         if (store.enabled && store.token != null) NodeService.start(this)
         render()
     }

@@ -6,9 +6,9 @@ import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * Меню узла: список разделов, как в системных настройках.
+ * Node menu: a list of sections, as in the system settings.
  *
- * Здесь только пункты; содержимое каждого — отдельный экран со стрелкой назад.
+ * Only the items live here; each one's content is a separate screen with a back arrow.
  */
 class MenuActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

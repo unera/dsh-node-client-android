@@ -13,20 +13,20 @@ import androidx.appcompat.app.AppCompatActivity
 import ru.uvw.dshnc.store.TokenStore
 
 /**
- * Экран одного раздела меню: заголовок с «назад» и строки этого раздела.
+ * The screen of a single menu section: a title with "back" and the rows of that section.
  */
 class SectionActivity : AppCompatActivity() {
-    /** Первый вход не должен пересобирать экран: иначе мигание при открытии. */
+    /** The first entry must not rebuild the screen: otherwise a flicker on opening. */
     private var built = false
 
-    /** Результат запроса камеры: после ответа пересобираем экран. */
+    /** The camera request result: after the answer we rebuild the screen. */
     private val cameraRequest = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) recreate() else status.text = getString(R.string.help_camera_settings)
     }
-    /** Результат сканирования приходит сюда: содержимое QR — та же ссылка. */
-    /** Выбор папки системным диалогом: путь приходит уже готовым. */
+    /** The scan result comes here: the contents of the QR code — the same link. */
+    /** Choosing a folder with the system dialog: the path comes already prepared. */
     private val picker = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -64,8 +64,8 @@ class SectionActivity : AppCompatActivity() {
             "overlay" -> getString(R.string.menu_overlay)
             else -> getString(R.string.menu_net)
         }
-        // тот же экран и тот же стиль, что у меню: третий уровень не должен
-        // выглядеть как другое приложение
+        // the same screen and the same style as the menu: the third level must not
+        // look like a different app
         root = Ui.screen(this, title) { finish() }
 
         status = TextView(this).apply {
@@ -98,7 +98,7 @@ class SectionActivity : AppCompatActivity() {
         root.addView(status)
     }
 
-    /** Системный выбор папки: путь не набираем руками, его даёт сам Android. */
+    /** The system folder picker: we do not type the path by hand, Android gives it itself. */
     private fun pickDirectory () {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -110,7 +110,7 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
-    /** Дерево SAF превращаем в обычный путь: файловый API работает с путями. */
+    /** We turn an SAF tree into an ordinary path: the file API works with paths. */
     private fun treeToPath (uri: android.net.Uri): String? {
         val docId = try {
             android.provider.DocumentsContract.getTreeDocumentId(uri)
@@ -127,7 +127,7 @@ class SectionActivity : AppCompatActivity() {
         return if (tail.isBlank()) base else "$base/$tail"
     }
 
-    /** Подпись и значение в две строки: длинный адрес не должен разрываться посередине. */
+    /** A label and a value on two lines: a long address must not break in the middle. */
     private fun block (label: String, value: String): LinearLayout {
         val density = resources.displayMetrics.density
         return LinearLayout(this).apply {
@@ -147,7 +147,7 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
-    /** Забывание необратимо: токен не восстановить, только получить новый код. */
+    /** Forgetting is irreversible: the token cannot be restored, only a new code obtained. */
     private fun confirmForget () {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setMessage(getString(R.string.menu_forget_confirm))
@@ -162,7 +162,7 @@ class SectionActivity : AppCompatActivity() {
             .show()
     }
 
-    /** Камера и распознавание: разрешение спрашиваем в момент нажатия. */
+    /** Camera and recognition: the permission is requested at the moment of the press. */
     private fun startScanner () {
         if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 7)
@@ -178,7 +178,7 @@ class SectionActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult (requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        // камеру выдали — сразу открываем сканер, отказ — говорим об этом словами
+        // the camera was granted — we open the scanner at once, a refusal — we say so in words
         if (requestCode == 7) {
             if (grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED) startScanner()
             else status.text = getString(R.string.menu_scan_no_camera)
@@ -186,11 +186,11 @@ class SectionActivity : AppCompatActivity() {
     }
 
     /**
-     * Список возможностей телефона.
+     * The list of the phone's capabilities.
      *
-     * Каждый пункт: название, состояние и короткое объяснение зачем. Тап ведёт
-     * туда, где это меняется — в системный диалог либо на свой экран, если
-     * настройка состоит из нескольких частей.
+     * Each item: the name, the state and a short explanation of why. A tap leads to
+     * where that is changed — into the system dialog, or to our own screen if the
+     * setting consists of several parts.
      */
     private fun buildAndroid (pad: Int) {
         push(Ui.itemEx(
@@ -241,16 +241,16 @@ class SectionActivity : AppCompatActivity() {
 
     override fun onResume () {
         super.onResume()
-        // доступы меняются в системных экранах: вернувшись, пересобираем список,
-        // иначе показываем устаревшее состояние
+        // permissions are changed in the system screens: coming back, we rebuild the list,
+        // otherwise we show a stale state
         if (built) recreate() else built = true
     }
 
-    /** Одна строка состояния: «состояние: включено» или «состояние: выключено». */
+    /** One state line: "state: on" or "state: off". */
     private fun stateLine (on: Boolean): String =
         "${getString(R.string.state_word)}: ${getString(if (on) R.string.state_on else R.string.state_off)}"
 
-    /** «указан 1 каталог» / «указано 2 каталога» / «указано 5 каталогов». */
+    /** "1 directory set" / "2 directories set" / "5 directories set". */
     private fun dirsPhrase (count: Int): String {
         if (count == 0) return getString(R.string.roots_none_phrase)
         val word = when {
@@ -261,7 +261,7 @@ class SectionActivity : AppCompatActivity() {
         return "$count $word ${getString(R.string.roots_where)}"
     }
 
-    /** Системный экран «доступ ко всем файлам»: включить и выключить можно там же. */
+    /** The system "access to all files" screen: on and off can be switched right there. */
     private fun openAllFiles () {
         try {
             startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
@@ -275,9 +275,9 @@ class SectionActivity : AppCompatActivity() {
     }
 
     /**
-     * Камера: сначала системный диалог — это самое короткое путь к «разрешить».
-     * Если Android больше не показывает диалог (отказ с «не спрашивать»),
-     * открываем экран приложения, откуда видно разрешения.
+     * Camera: first the system dialog — that is the shortest way to "allow".
+     * If Android no longer shows the dialog (a refusal with "do not ask"),
+     * we open the app screen where the permissions are visible.
      */
     private fun askCamera () {
         if (checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -287,12 +287,12 @@ class SectionActivity : AppCompatActivity() {
         val canAsk = shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)
         cameraRequest.launch(android.Manifest.permission.CAMERA)
         if (!canAsk) {
-            // диалог мог быть закрыт навсегда: подсказываем, где искать
+            // the dialog may have been closed for good: we hint where to look
             status.text = getString(R.string.help_camera_settings)
         }
     }
 
-    /** Экран разрешений нашего приложения в системных настройках. */
+    /** Our app's permission screen in the system settings. */
     private fun openAppSettings () {
         try {
             startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
@@ -301,7 +301,7 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
-    /** Системный экран доступа «поверх других приложений»: своего экрана не надо. */
+    /** The system "over other apps" access screen: no screen of our own is needed. */
     private fun openOverlaySettings () {
         try {
             startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
@@ -310,7 +310,7 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
-    /** Рабочие каталоги: добавление системным диалогом и список. */
+    /** Working directories: adding through the system dialog and the list. */
     private fun buildRoots () {
         if (store.roots.isEmpty()) {
             push(Ui.item(this, getString(R.string.menu_roots_none), null, null))
@@ -325,13 +325,13 @@ class SectionActivity : AppCompatActivity() {
         push(status)
     }
 
-    /** Сколько приложений видно прямо сейчас: без разрешения их заметно меньше. */
+    /** How many apps are visible right now: without the permission noticeably fewer. */
     private fun visibleApps (): Int {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         return packageManager.queryIntentActivities(intent, 0).size
     }
 
-    /** Что именно видит узел: пакеты и названия. */
+    /** What exactly the node sees: the packages and the names. */
     private fun buildApps (pad: Int) {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val items = packageManager.queryIntentActivities(intent, 0)
@@ -366,7 +366,7 @@ class SectionActivity : AppCompatActivity() {
         root.addView(status)
     }
 
-    /** Подключение по ссылке: обмен кода на токен. */
+    /** Connecting by a link: an exchange of the code for a token. */
     private fun connect (raw: String) {
         val parsed = ru.uvw.dshnc.logic.LinkParser.parse(raw)
         if (parsed == null) {

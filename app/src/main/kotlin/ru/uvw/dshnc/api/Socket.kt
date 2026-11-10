@@ -9,14 +9,14 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Канал узла: WebSocket, по которому сервер говорит «есть работа».
+ * The node's channel: the WebSocket over which the server says "there is work".
  *
- * Пинг здесь нужен не для команд, а чтобы заметить обрыв: сервер отвечает
- * `pong`, и по нему понятно, жив ли канал. Команды забираются запросом только
- * после кадра `state` — то есть строго по состоянию, а не по таймеру.
+ * Ping here is not for commands but for noticing a break: the server answers `pong`,
+ * and that tells whether the channel is alive. Commands are fetched by a request only
+ * after a `state` frame — that is, strictly by state, not by a timer.
  *
- * `check_state` — это заявка «я жду»: сервер присылает `state` только тем, кто
- * её сделал, иначе сообщения копились бы у него.
+ * `check_state` is a request saying "I am waiting": the server sends `state` only to
+ * those who made it, otherwise the messages would pile up on its side.
  */
 class Socket(
     private val base: String,
@@ -28,10 +28,10 @@ class Socket(
     private val onPong: (Long) -> Unit = {},
 ) {
     private val client = OkHttpClient.Builder()
-        // Пинг на уровне протокола: OkHttp сам шлёт кадры ping и рвёт
-        // соединение, если pong не пришёл. Без него мёртвый сокет считается
-        // живым, пока наш сторож не досчитает до двух растянутых интервалов —
-        // а это минуты, в которые узел числится подключённым и не отвечает.
+        // Protocol-level ping: OkHttp sends ping frames itself and drops
+        // the connection if no pong came. Without it a dead socket counts as
+        // alive until our watchdog counts up to two stretched intervals —
+        // and those are minutes during which the node counts as connected and does not answer.
         .pingInterval(20, TimeUnit.SECONDS)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS)
@@ -39,10 +39,10 @@ class Socket(
 
     private var socket: WebSocket? = null
 
-    /** Время последнего ответа на пинг: канал жив независимо от команд. */
+    /** Time of the last answer to a ping: the channel is alive regardless of commands. */
     @Volatile var lastPong: Long = 0L
 
-    /** Когда ушёл каждый пинг: по нему считаем задержку ответа. */
+    /** When each ping went out: used to compute the answer delay. */
     private val sentAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     fun connect (conn: Long? = null) {
@@ -61,14 +61,14 @@ class Socket(
                 }
                 when (frame.optString("t")) {
                     "hello-ok" -> {
-                        // заявляем ожидание сразу: без этого сервер не имеет права
-                        // присылать кадр, даже если работа уже есть
+                        // we declare our wait right away: without it the server has no right
+                        // to send the frame, even if there is already work
                         webSocket.send(JSONObject().put("t", "check_state").put("known", JSONObject.NULL).toString())
                         onOpen()
                     }
                     "pong" -> {
-                        // время ответа и задержка: id пришёл тот же, что ушёл,
-                        // поэтому RTT считается по своей же отправке
+                        // answer time and delay: the id came back the same one that went out,
+                        // so RTT is computed from our own send
                         val now = System.currentTimeMillis()
                         lastPong = now
                         val sent = sentAt.remove(frame.opt("id")?.toString())
@@ -89,7 +89,7 @@ class Socket(
         })
     }
 
-    /** Сказать серверу «я снова жду» после обработки пачки. */
+    /** Tell the server "I am waiting again" after a batch is processed. */
     fun waiting(known: Long?) {
         socket?.send(JSONObject().put("t", "check_state").put("known", known ?: JSONObject.NULL).toString())
     }

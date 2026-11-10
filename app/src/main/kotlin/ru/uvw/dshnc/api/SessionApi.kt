@@ -8,12 +8,12 @@ import ru.uvw.dshnc.service.NodeService
 import ru.uvw.dshnc.store.TokenStore
 
 /**
- * `session`: служебное состояние узла.
+ * `session`: the node's service state.
  *
- * Живёт ради отладки: вместо «пришли скриншот» достаточно попросить
- * `session.debug_info` и увидеть версию, состояние связи, каталоги и счётчики.
- * Поэтому метод закрыт настройкой: по умолчанию выключен, и владелец телефона
- * сам решает, отдавать ли такое наружу.
+ * It exists for debugging: instead of "send me a screenshot" it is enough to ask for
+ * `session.debug_info` and see the version, the link state, the directories and the
+ * counters. That is why the method is gated by a setting: it is off by default, and the
+ * phone owner decides whether to expose such things at all.
  */
 class SessionApi(private val context: Context) {
     companion object {
@@ -45,12 +45,12 @@ class SessionApi(private val context: Context) {
                 .put("session", session ?: JSONObject.NULL))
         }
         if (method == "ping") {
-            // сервер считает rtt сам: он знает, когда отправил команду.
-            // Узел отдаёт только своё время и аптайм.
+            // the server computes rtt itself: it knows when it sent the command.
+            // The node hands over only its own time and uptime.
             val now = System.currentTimeMillis()
             return JSONObject().put("status", "ok").put("payload", JSONObject()
-                // `pong` — собственные часы узла: сервер считает по ним задержку
-                // и расхождение часов, как у десктопного клиента
+                // `pong` — the node's own clock: the server uses it to compute the delay
+                // and the clock skew, the same way as with the desktop client
                 .put("pong", now)
                 .put("sentAt", now)
                 .put("upSeconds", NodeService.uptime())
