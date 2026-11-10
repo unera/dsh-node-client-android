@@ -14,6 +14,14 @@ import org.json.JSONObject
  */
 object Timeouts {
     /**
+     * The pause of a method that named none and whose command named none either.
+     *
+     * One number for every method: a method with a pause of its own would keep a command
+     * alive while the server has already given up on it.
+     */
+    const val DEFAULT_MS = 15_000
+
+    /**
      * The pause in milliseconds, or null when nobody named one.
      *
      * @param explicitMs `args.timeoutMs` — the most explicit form

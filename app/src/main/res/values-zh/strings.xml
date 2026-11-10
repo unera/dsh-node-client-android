@@ -9,4 +9,7 @@
     <string name="status_connected">已连接</string>
     <string name="perm_title">权限</string>
     <string name="perm_notifications">通知</string>
+    <string name="dialog_channel">提问</string>
+    <string name="dialog_default_title">问题</string>
+    <string name="dialog_list_title">进行中的问题</string>
 </resources>

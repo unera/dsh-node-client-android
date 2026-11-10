@@ -76,4 +76,7 @@
     <string name="menu_camera">Камера</string>
     <string name="help_camera">нужна для снимка по команде (camera_snap)</string>
     <string name="help_camera_settings">если диалог не появился: Настройки → Приложения → dshnc → Разрешения → Камера</string>
+    <string name="dialog_channel">Вопросы</string>
+    <string name="dialog_default_title">Вопрос</string>
+    <string name="dialog_list_title">Активные вопросы</string>
 </resources>
