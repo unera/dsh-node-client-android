@@ -59,12 +59,12 @@ class DeviceApi (private val context: Context) {
         .put("args", args)
         .put("returns", "object")
 
-    fun handle (method: String, args: JSONObject): JSONObject = try {
+    fun handle (method: String, args: JSONObject, commandSeconds: Double = 0.0): JSONObject = try {
         when (method) {
             "device_status" -> deviceStatus()
             "device_info" -> deviceInfo()
             "device_health" -> deviceHealth()
-            "camera_snap" -> CameraApi(context).snap(args)
+            "camera_snap" -> CameraApi(context).snap(args, commandSeconds)
             "photos_latest" -> photosLatest(args)
             "apps" -> apps()
             "alarm_next" -> alarmNext()

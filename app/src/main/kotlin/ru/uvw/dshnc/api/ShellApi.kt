@@ -3,6 +3,7 @@ package ru.uvw.dshnc.api
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
+import ru.uvw.dshnc.logic.Timeouts
 
 /**
  * Running a shell command on the phone.
@@ -18,6 +19,21 @@ import java.util.concurrent.TimeUnit
  * person or a model runs.
  */
 class ShellApi (private val roots: List<String>) {
+    /**
+     * Live processes by command number.
+     *
+     * `#INTERNAL.CANCEL` reaches the node not with a word but with a number, so the node
+     * has to find the process by that number. Without the registry the cancel arrived into
+     * emptiness and the command ran to its end.
+     *
+     * Android has no `setsid` and the app cannot start a process group of its own: a
+     * `destroy()` stops the `sh` wrapper, while a pipeline's children may outlive it.
+     */
+    private val running = java.util.concurrent.ConcurrentHashMap<Long, Process>()
+
+    /** How many commands are running right now — for the FLUSH barrier and diagnostics. */
+    fun runningCount (): Int = running.size
+
     fun schema (): JSONObject = JSONObject()
         .put("name", "shell")
         .put("version", NodeApi.VERSION)
@@ -35,65 +51,118 @@ class ShellApi (private val roots: List<String>) {
                 .put("required", org.json.JSONArray().put("command")))
             .put("returns", "object")))
 
-    fun handle (method: String, args: JSONObject): JSONObject {
+    fun handle (method: String, args: JSONObject, seq: Long = 0L, commandSeconds: Double = 0.0): JSONObject {
         if (method != "exec") return err("unknown_method", "нет такого метода: $method")
         val command = args.optString("command").trim()
         if (command.isEmpty()) return err("bad_args", "нужна команда")
         val cwd = args.optString("cwd").ifBlank { roots.firstOrNull() ?: "/storage/emulated/0" }
         if (!allowed(cwd)) return err("path_denied", "каталог $cwd вне разрешённых: ${roots.joinToString(", ")}")
-        // same as on the desktop: `timeout` is in seconds; `timeoutMs` is kept for explicitness
-        val timeout = if (args.has("timeoutMs")) {
-            args.optInt("timeoutMs", 15_000)
-        } else {
-            (args.optDouble("timeout", 15.0) * 1000).toInt()
-        }.coerceIn(1_000, 120_000)
+        // like on the desktop: `timeoutMs`, then `timeout` in seconds from the arguments,
+        // then the `timeout` the server set for the command, then our own default
+        val timeout = (Timeouts.resolveMs(args, commandSeconds) ?: DEFAULT_TIMEOUT_MS)
+            .coerceIn(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
         val started = System.currentTimeMillis()
         return try {
             val process = ProcessBuilder("/system/bin/sh", "-c", command)
                 .directory(File(cwd))
                 .redirectErrorStream(false)
                 .start()
-            // we read both streams in parallel: otherwise a full buffer of one hangs the other
-            val out = StringBuilder()
-            val errText = StringBuilder()
-            val reader = Thread { drain(process.inputStream, out, LIMIT) }.apply { start() }
-            val errReader = Thread { drain(process.errorStream, errText, ERR_LIMIT) }.apply { start() }
-            // stdin is fed in advance: the script may be waiting for data
-            val input = args.optString("stdin")
-            if (input.isNotEmpty()) {
-                runCatching {
-                    process.outputStream.use { it.write(input.toByteArray()) }
+            // from now on the command can be cancelled by its number
+            running[seq] = process
+            try {
+                // we read both streams in parallel: otherwise a full buffer of one hangs the other
+                val out = StringBuilder()
+                val errText = StringBuilder()
+                val reader = Thread { drain(process.inputStream, out, LIMIT) }.apply { start() }
+                val errReader = Thread { drain(process.errorStream, errText, ERR_LIMIT) }.apply { start() }
+                // stdin is fed in advance: the script may be waiting for data
+                val input = args.optString("stdin")
+                if (input.isNotEmpty()) {
+                    runCatching {
+                        process.outputStream.use { it.write(input.toByteArray()) }
+                    }
+                } else {
+                    runCatching { process.outputStream.close() }
                 }
-            } else {
-                runCatching { process.outputStream.close() }
-            }
-            val done = process.waitFor(timeout.toLong(), TimeUnit.MILLISECONDS)
-            if (!done) process.destroyForcibly()
-            reader.join(2000)
-            errReader.join(2000)
-            val code = if (done) process.exitValue() else -1
-            val spent = System.currentTimeMillis() - started
-            // a rejection on a non-zero code — exactly like the desktop shell.exec:
-            // the model has to see "it failed", not "success with a number"
-            if (!done) {
-                return err("timeout", "команда не уложилась в ${timeout / 1000} с")
-            }
-            if (code != 0) {
-                val detail = buildString {
-                    append("код $code")
-                    if (errText.isNotEmpty()) append("\n[stderr] ").append(errText)
-                    if (out.isNotEmpty()) append("\n[stdout] ").append(out)
+                val done = process.waitFor(timeout.toLong(), TimeUnit.MILLISECONDS)
+                if (!done) process.destroyForcibly()
+                reader.join(2000)
+                errReader.join(2000)
+                val code = if (done) process.exitValue() else -1
+                val spent = System.currentTimeMillis() - started
+                // a rejection on a non-zero code — exactly like the desktop shell.exec:
+                // the model has to see "it failed", not "success with a number"
+                if (!done) {
+                    return err("timeout", "команда не уложилась в ${timeout / 1000} с")
                 }
-                return err("exit_nonzero", detail)
+                if (code != 0) {
+                    val detail = buildString {
+                        append("код $code")
+                        if (errText.isNotEmpty()) append("\n[stderr] ").append(errText)
+                        if (out.isNotEmpty()) append("\n[stdout] ").append(out)
+                    }
+                    return err("exit_nonzero", detail)
+                }
+                JSONObject().put("status", "ok").put("payload", JSONObject()
+                    .put("exitCode", 0)
+                    .put("stdout", out.toString())
+                    .put("stderr", errText.toString())
+                    .put("ms", spent))
+            } finally {
+                // the number is free again: a late cancel must find nothing, not a dead process
+                running.remove(seq)
             }
-            JSONObject().put("status", "ok").put("payload", JSONObject()
-                .put("exitCode", 0)
-                .put("stdout", out.toString())
-                .put("stderr", errText.toString())
-                .put("ms", spent))
         } catch (error: Throwable) {
             err("exec_failed", error.message ?: error.javaClass.simpleName)
         }
+    }
+
+    /**
+     * Service commands (`#INTERNAL.*`).
+     *
+     * They are not declared in any API and arrive with `api = -1`: the server knows what
+     * they are by itself. They are handled before the name-based dispatch, otherwise they
+     * would fall through to `files` and be answered with `unknown_method`.
+     */
+    fun control (method: String, args: JSONObject): JSONObject = when (method) {
+        "#INTERNAL.CANCEL" -> cancel(args.optLong("seq", -1L))
+        "#INTERNAL.FLUSH" -> flush()
+        "#INTERNAL.APPROVE" -> err("no_approver", "на телефоне нет диалога подтверждения: человек не может ответить")
+        else -> err("unknown_method", "неизвестная служебная команда: $method")
+    }
+
+    /**
+     * `#INTERNAL.CANCEL`: stop the command with this number.
+     *
+     * `destroy()` first and `destroyForcibly()` if it did not die: a process that ignores
+     * SIGTERM must not keep the slot.
+     */
+    private fun cancel (seq: Long): JSONObject {
+        val process = running.remove(seq)
+            ?: return err("no_such_process", "команда $seq не выполняется")
+        return try {
+            process.destroy()
+            if (!process.waitFor(CANCEL_WAIT_MS, TimeUnit.MILLISECONDS)) process.destroyForcibly()
+            JSONObject().put("status", "ok").put("payload", JSONObject().put("cancelled", true))
+        } catch (error: Throwable) {
+            err("cancel_failed", "не смог остановить процесс $seq: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * `#INTERNAL.FLUSH`: a barrier meaning "everything before me has already finished".
+     *
+     * The harvest loop is sequential: every command, `exec` included, is awaited before the
+     * next one starts, so by the time the barrier itself is reached nothing from the same
+     * batch is running. The wait below is only a guard on that invariant.
+     */
+    private fun flush (): JSONObject {
+        val deadline = System.currentTimeMillis() + FLUSH_WAIT_MS
+        while (running.isNotEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        if (running.isNotEmpty()) {
+            return err("still_running", "после FLUSH ещё выполняются команды: ${running.size}")
+        }
+        return JSONObject().put("status", "ok").put("payload", JSONObject().put("flushed", true))
     }
 
     /** Read a stream up to a limit: the output of a gigantic command must not eat memory. */
@@ -137,5 +206,13 @@ class ShellApi (private val roots: List<String>) {
     companion object {
         private const val LIMIT = 64 * 1024
         private const val ERR_LIMIT = 16 * 1024
+        /** The pause of `exec` when neither the arguments nor the server named one. */
+        private const val DEFAULT_TIMEOUT_MS = 15_000
+        private const val MIN_TIMEOUT_MS = 1_000
+        private const val MAX_TIMEOUT_MS = 120_000
+        /** How long a cancelled process is given to die on SIGTERM. */
+        private const val CANCEL_WAIT_MS = 2000L
+        /** How long the FLUSH barrier waits for the registry to drain. */
+        private const val FLUSH_WAIT_MS = 5000L
     }
 }

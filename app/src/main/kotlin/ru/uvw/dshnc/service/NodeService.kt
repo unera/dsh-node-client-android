@@ -148,7 +148,7 @@ class NodeService : Service() {
         val transfer = TransferApi(base, token)
         while (true) {
             try {
-                api.announce(token, apis, uptimeSeconds())
+                api.announce(token, apis, uptimeSeconds(), TokenStore(this).roots.firstOrNull(), SessionApi.rules())
                 runCatching { TokenStore(this@NodeService).connected = true }
                 notify(getString(R.string.status_connected))
                 // work arrives as a frame: we bring the channel up and wait
@@ -156,6 +156,19 @@ class NodeService : Service() {
                     base = base,
                     token = token,
                     onWake = { scope.launch { runCatching { harvest(api, token, files, session, transfer, notifications, device, shell) }; channelRef?.waiting(known) } },
+                    // the same values `announce` sends: the server updates the node card from
+                    // the hello, before the announcement arrives
+                    workdir = TokenStore(this).roots.firstOrNull(),
+                    access = "full",
+                    approver = "none",
+                    startMode = "full",
+                    uptimeSeconds = { uptimeSeconds() },
+                    epoch = TokenStore(this).epoch.takeIf { it >= 0 },
+                    onReconnect = { serverEpoch ->
+                        // the server restarted: what it had issued to us is not executable any
+                        // more, so the cursor is dropped and the restart is declared again
+                        rememberEpoch(serverEpoch)
+                    },
                     onOpen = {
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
                         runCatching { notify(getString(R.string.status_connected)) }
@@ -191,7 +204,7 @@ class NodeService : Service() {
                 channelOpen = false
                 val connNumber = TokenStore(this@NodeService).nextConnection()
                 runCatching { TokenStore(this@NodeService).addEvent("соединение", "№$connNumber") }
-                channel.connect(connNumber)
+                channel.connect(connNumber, known)
                 // we wait for the opening: otherwise the wait loop exits right away
                 delay(500)
                 if (!channelOpen) delay(RECONNECT_MS)
@@ -263,26 +276,52 @@ class NodeService : Service() {
     }
 
     private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
+        // The restart declaration has to reach the server BEFORE the first command is
+        // taken: otherwise the server hands out `exec` and the `known: null` that arrives a
+        // moment later closes it as `node_restarted` — the very illness the declaration is
+        // about, done by the node's own hand. The wait is bounded and happens only while a
+        // live channel still owes the declaration: a socket that did not come up must not
+        // hold the node, it will pick work up on its own wake.
+        val channel = channelRef
+        if (channel != null && !channel.announced()) {
+            val deadline = System.currentTimeMillis() + DECLARATION_WAIT_MS
+            while (!channel.announced() && System.currentTimeMillis() < deadline) delay(20)
+            if (!channel.announced()) {
+                runCatching { TokenStore(this@NodeService).addEvent("декларация", "не ушла за ${DECLARATION_WAIT_MS}мс") }
+            }
+        }
         while (true) {
             val answer = api.commands(token)
             // the liveness mark: the screen will show that the service really works
             runCatching { TokenStore(this@NodeService).heartbeat = System.currentTimeMillis() }
+            // the server generation: a different one means the server restarted and
+            // everything it had issued to this node died with the previous generation
+            serverEpoch(answer)?.let { epoch -> rememberEpoch(epoch) }
             val batch = answer.optJSONArray("commands") ?: JSONArray()
             for (index in 0 until batch.length()) {
                 val command = batch.getJSONObject(index)
+                val seq = command.optLong("seq")
+                // the command's own pause set by the server, in seconds: arguments win over
+                // it, but without it a method falls back to its default and the server
+                // waits for an answer it has already given up on
+                val commandSeconds = if (command.has("timeout")) command.optDouble("timeout", 0.0) else 0.0
                 // we have not declared a single API yet, so we honestly answer that the
                 // method is unknown: silence would look like a hang
                 val method = command.optString("method")
                 val args = command.optJSONObject("args") ?: JSONObject()
                 // we tell the session.* and files.* methods apart by the prefix and by the
-                // known names: the server sends the method name, not "api.method"
+                // known names: the server sends the method name, not "api.method".
+                // Service commands go first: they come with `api = -1` and a name starting
+                // with `#`, are handled by the client itself and must not fall through to
+                // `files`
                 val outcome = when {
+                    method.startsWith("#") -> shell.control(method, args)
                     method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                     method == "post" && args.has("id") -> notifications.handle(method, args)
-                    method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args)
-                    method == "exec" -> shell.handle(method, args)
-                    method == "copyToDevice" -> transfer.download(command.optLong("seq"), args)
-                    method == "copyFromDevice" -> transfer.upload(command.optLong("seq"), args)
+                    method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args, commandSeconds)
+                    method == "exec" -> shell.handle(method, args, seq, commandSeconds)
+                    method == "copyToDevice" -> transfer.download(seq, args, commandSeconds)
+                    method == "copyFromDevice" -> transfer.upload(seq, args, commandSeconds)
                     else -> files.handle(method, args)
                 }
                 // `ok` is a mandatory field: the server decides from it whether this is a
@@ -301,13 +340,65 @@ class NodeService : Service() {
                         .put("code", outcome.optString("code"))
                         .put("message", outcome.optString("message"))
                 }
-                api.result(token, command.optLong("seq"), payload)
+                // our own clock in the envelope: the server's `timing` rule computes
+                // durationMs and clockSkewMs from it — without `now` its `nodeNow` is null
+                // and the rule is half-blind
+                payload.put("now", System.currentTimeMillis())
+                api.result(token, seq, payload)
                 executed.incrementAndGet()
-                known = maxOf(known, command.optLong("seq"))
+                known = maxOf(known, seq)
             }
+            // The queue is exhausted — only now can the server's number be accepted in
+            // full. Accepting it earlier is impossible: commands with smaller numbers may
+            // still stand in the queue, and "I know up to N" would leave them undelivered.
+            if (batch.length() == 0) known = adoptMaxCommandno(known, maxCommandno(answer))
             // the batch is over: from here we wait for a frame instead of spinning the loop
             return
         }
+    }
+
+    /** `max_commandno` — the last command number the server has spent — if it sent one. */
+    private fun maxCommandno(answer: JSONObject): Long? =
+        if (answer.has("max_commandno") && !answer.isNull("max_commandno")) answer.optLong("max_commandno") else null
+
+    /** The generation of the server process that answered — if it named one. */
+    private fun serverEpoch(answer: JSONObject): Long? =
+        if (answer.has("epoch") && !answer.isNull("epoch")) answer.optLong("epoch") else null
+
+    /**
+     * Remember the server generation; a real change means the node is on its own.
+     *
+     * The numbers the old generation issued mean nothing any more, so the cursor is
+     * dropped and the restart is declared again: the server then closes what it had already
+     * handed out instead of holding it in `processing` until the timeout. `-1` in the store
+     * is "we know no generation yet" — the first start is not a change, and there the
+     * restart travels in the hello frame anyway.
+     */
+    private fun rememberEpoch(epoch: Long?) {
+        if (epoch == null || epoch <= 0) return
+        val store = TokenStore(this)
+        val previous = store.epoch
+        if (previous == epoch) return
+        store.epoch = epoch
+        // the first generation we ever see is not a change: the restart travels in the
+        // hello frame, and there are no commands of ours for the server to close
+        if (previous < 0) return
+        runCatching { store.addEvent("epoch", "$previous → $epoch") }
+        known = 0L
+        channelRef?.declareRestart()
+    }
+
+    /**
+     * Accept the number the server named.
+     *
+     * `known` is not "the maximum of the numbers received" but "up to which number I am
+     * aware": the numbers are an honest autoincrement and are never reused, so the
+     * server's number also closes the holes — a cancelled command has spent a number and
+     * will never come to the node.
+     */
+    private fun adoptMaxCommandno(current: Long, named: Long?): Long {
+        if (named == null) return current
+        return maxOf(current, named)
     }
 
     /**
@@ -385,6 +476,8 @@ class NodeService : Service() {
         /** A fallback queue check, in case the frame did not come. */
         private const val POLL_FALLBACK_MS = 30_000L
         private const val RECONNECT_MS = 5000L
+        /** How long the first work waits for the restart declaration to go out. */
+        private const val DECLARATION_WAIT_MS = 1000L
 
         /** How long the node has been running — needed by the `session.ping` method. */
         fun uptime(): Long = instance?.uptimeSeconds() ?: 0L

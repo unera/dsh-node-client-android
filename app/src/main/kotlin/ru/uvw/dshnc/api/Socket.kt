@@ -26,6 +26,20 @@ class Socket(
     private val onOpen: () -> Unit,
     private val onClose: (String) -> Unit,
     private val onPong: (Long) -> Unit = {},
+    /** The first allowed root: the server shows it in the panel and keeps session dirs there. */
+    private val workdir: String? = null,
+    /** The permission ceiling of the node: there is no sandbox on the phone, so `full`. */
+    private val access: String = "full",
+    /** Whether a human can be asked: no dialog here, so `none`. */
+    private val approver: String = "none",
+    /** The narrowest mode a command may run in — the same value as in `announce`. */
+    private val startMode: String = "full",
+    /** How long the node has been running: the server translates it into its own clock. */
+    private val uptimeSeconds: () -> Long = { 0L },
+    /** The server generation the node remembers; null — it knows none yet. */
+    private val epoch: Long? = null,
+    /** The server said the generation changed: the epoch reset has to be applied. */
+    private val onReconnect: (Long?) -> Unit = {},
 ) {
     private val client = OkHttpClient.Builder()
         // Protocol-level ping: OkHttp sends ping frames itself and drops
@@ -45,12 +59,27 @@ class Socket(
     /** When each ping went out: used to compute the answer delay. */
     private val sentAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    fun connect (conn: Long? = null) {
+    fun connect (conn: Long? = null, known: Long = 0L) {
         val url = base.replaceFirst("http", "ws").trimEnd('/') + "/v1/ws"
         val request = Request.Builder().url(url).header("sec-websocket-protocol", token).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send(JSONObject().put("t", "hello").put("proto", proto).put("known", JSONObject.NULL).put("conn", conn ?: JSONObject.NULL).toString())
+                // The hello carries the same fields as `announce`: the server updates the
+                // node card from it before the announcement arrives, otherwise they land
+                // one step later and the panel shows a half-truth for a while.
+                val hello = JSONObject()
+                    .put("t", "hello")
+                    .put("proto", proto)
+                    .put("known", declaration.hello(known) ?: JSONObject.NULL)
+                    .put("conn", conn ?: JSONObject.NULL)
+                    .put("epoch", epoch ?: JSONObject.NULL)
+                    .put("workdir", workdir ?: JSONObject.NULL)
+                    .put("access", access)
+                    .put("allowEscalation", false)
+                    .put("approver", approver)
+                    .put("base", startMode)
+                    .put("uptimeSeconds", uptimeSeconds())
+                webSocket.send(hello.toString())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -62,8 +91,14 @@ class Socket(
                 when (frame.optString("t")) {
                     "hello-ok" -> {
                         // we declare our wait right away: without it the server has no right
-                        // to send the frame, even if there is already work
-                        webSocket.send(JSONObject().put("t", "check_state").put("known", JSONObject.NULL).toString())
+                        // to send the frame, even if there is already work. This frame is
+                        // the one the server reads the restart from, so the very first
+                        // `check_state` of a fresh process carries `known: null`
+                        val cursor = declaration.checkState(known)
+                        webSocket.send(JSONObject().put("t", "check_state").put("known", cursor ?: JSONObject.NULL).toString())
+                        // the server keeps its generation: a different one means it restarted
+                        // while we were away, and the epoch the node remembers is stale
+                        if (frame.optBoolean("reconnect", false)) onReconnect(frame.optLong("epoch", 0L))
                         onOpen()
                     }
                     "pong" -> {
@@ -89,9 +124,37 @@ class Socket(
         })
     }
 
-    /** Tell the server "I am waiting again" after a batch is processed. */
+    /**
+     * Tell the server "I am waiting again" after a batch is processed.
+     *
+     * While the restart declaration is still owed, this frame carries it — the same rule
+     * as on the desktop: the declaration must not be lost because a wait frame happened to
+     * come first.
+     */
     fun waiting(known: Long?) {
-        socket?.send(JSONObject().put("t", "check_state").put("known", known ?: JSONObject.NULL).toString())
+        // nothing to send on: the declaration must not be spent, the next hello carries it
+        val target = socket ?: return
+        val value = if (declaration.announced()) known else declaration.checkState(known ?: 0L)
+        target.send(JSONObject().put("t", "check_state").put("known", value ?: JSONObject.NULL).toString())
+    }
+
+    /** Whether the one-shot declaration has already gone out: the first command waits for it. */
+    fun announced(): Boolean = declaration.announced()
+
+    /**
+     * Say "I restarted" again — used when the server generation changed, not on an
+     * ordinary start.
+     *
+     * Everything the old generation had already handed out died together with it, and
+     * leaving those commands in `processing` until the timeout is a lie. Said once, in one
+     * frame: if this connection drops before the server hears us, the declaration is still
+     * owed and the next connection repeats it in its hello.
+     */
+    fun declareRestart() {
+        declaration.restart()
+        val target = socket ?: return
+        val value = declaration.checkState(0L)
+        target.send(JSONObject().put("t", "check_state").put("known", value ?: JSONObject.NULL).toString())
     }
 
     fun ping(id: Int) {
@@ -102,5 +165,13 @@ class Socket(
     fun close() {
         socket?.close(1000, "bye")
         socket = null
+    }
+
+    companion object {
+        /**
+         * The declaration lives in the process, not in a connection: a reconnect keeps the
+         * same process and the same running commands.
+         */
+        private val declaration = ru.uvw.dshnc.logic.Declaration()
     }
 }

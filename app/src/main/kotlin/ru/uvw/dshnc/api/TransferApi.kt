@@ -6,6 +6,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import ru.uvw.dshnc.logic.Timeouts
 
 /**
  * File transfer in a single HTTP request — the same as in the desktop client.
@@ -17,6 +18,13 @@ import java.net.URL
 class TransferApi(private val base: String, private val token: String) {
 
     companion object {
+        /** How long the answer is awaited when neither the arguments nor the server named a pause. */
+        private const val UPLOAD_READ_TIMEOUT_MS = 120_000
+        private const val DOWNLOAD_READ_TIMEOUT_MS = 60_000
+        /** A transfer below half a minute makes no sense even for a small file, above it — a lost command. */
+        private const val MIN_TRANSFER_TIMEOUT_MS = 30_000
+        private const val MAX_TRANSFER_TIMEOUT_MS = 600_000
+
         fun schema(): JSONObject = JSONObject()
             .put("name", "transfer")
             .put("version", "android-0.3.10")
@@ -38,7 +46,7 @@ class TransferApi(private val base: String, private val token: String) {
      * checking sha256, so a break does not leave half a file under the real
      * name.
      */
-    fun upload (seq: Long, args: JSONObject): JSONObject {
+    fun upload (seq: Long, args: JSONObject, commandSeconds: Double = 0.0): JSONObject {
         val path = args.optString("path").ifBlank { return err("bad_args", "не передан путь, что отправлять") }
         val hostPath = args.optString("hostPath").ifBlank { return err("bad_args", "не передан путь, куда положить на сервере") }
         val source = File(path)
@@ -51,7 +59,10 @@ class TransferApi(private val base: String, private val token: String) {
             setRequestProperty("content-length", source.length().toString())
             doOutput = true
             connectTimeout = 20_000
-            readTimeout = 120_000
+            // the same pause the server gave the command: a transfer that outlives it has
+            // already been declared lost on the other side
+            readTimeout = (Timeouts.resolveMs(args, commandSeconds) ?: UPLOAD_READ_TIMEOUT_MS)
+                .coerceIn(MIN_TRANSFER_TIMEOUT_MS, MAX_TRANSFER_TIMEOUT_MS)
         }
         return try {
             connection.outputStream.use { output -> source.inputStream().use { it.copyTo(output) } }
@@ -69,7 +80,7 @@ class TransferApi(private val base: String, private val token: String) {
         }
     }
 
-    fun download(seq: Long, args: JSONObject): JSONObject {
+    fun download(seq: Long, args: JSONObject, commandSeconds: Double = 0.0): JSONObject {
         val path = args.optString("path").ifBlank {
             return err("bad_args", "не передан путь, куда сохранять")
         }
@@ -84,7 +95,9 @@ class TransferApi(private val base: String, private val token: String) {
             setRequestProperty("content-length", "0")
             doOutput = true
             connectTimeout = 20_000
-            readTimeout = 60_000
+            // the pause of the command as a whole, the same way as on upload
+            readTimeout = (Timeouts.resolveMs(args, commandSeconds) ?: DOWNLOAD_READ_TIMEOUT_MS)
+                .coerceIn(MIN_TRANSFER_TIMEOUT_MS, MAX_TRANSFER_TIMEOUT_MS)
         }
         return try {
             val status = connection.responseCode

@@ -15,6 +15,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
+import ru.uvw.dshnc.logic.Timeouts
 
 /**
  * A camera snapshot on command.
@@ -27,7 +28,7 @@ import org.json.JSONObject
  * we do not start a separate channel for pictures.
  */
 class CameraApi (private val context: Context) {
-    fun snap (args: JSONObject): JSONObject {
+    fun snap (args: JSONObject, commandSeconds: Double = 0.0): JSONObject {
         if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             return error("нужно разрешение на камеру: выдай его в приложении")
         }
@@ -95,9 +96,12 @@ class CameraApi (private val context: Context) {
             failure = error.message ?: error.javaClass.simpleName
         }
 
-        val finished = done.await(15, TimeUnit.SECONDS)
+        // how long to wait for the frame: the arguments win, then the command's own timeout
+        val wait = (Timeouts.resolveMs(args, commandSeconds) ?: SNAP_TIMEOUT_MS)
+            .coerceIn(MIN_SNAP_TIMEOUT_MS, MAX_SNAP_TIMEOUT_MS)
+        val finished = done.await(wait.toLong(), TimeUnit.MILLISECONDS)
         thread.quitSafely()
-        if (!finished) return error("камера не ответила за 15 секунд")
+        if (!finished) return error("камера не ответила за ${wait / 1000} секунд")
         failure?.let { return error(it) }
         if (!target.exists() || target.length() == 0L) return error("кадр не записался")
         return JSONObject().put("status", "ok").put("payload", JSONObject()
@@ -209,4 +213,11 @@ class CameraApi (private val context: Context) {
     }
 
     private fun error (message: String) = JSONObject().put("status", "error").put("message", message)
+
+    companion object {
+        /** The pause of a snapshot when neither the arguments nor the server named one. */
+        private const val SNAP_TIMEOUT_MS = 15_000
+        private const val MIN_SNAP_TIMEOUT_MS = 1_000
+        private const val MAX_SNAP_TIMEOUT_MS = 120_000
+    }
 }

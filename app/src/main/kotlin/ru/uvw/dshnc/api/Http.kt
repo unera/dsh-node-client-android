@@ -58,13 +58,36 @@ class NodeApi(private val base: String) {
             .put("clientVersion", VERSION)
     )
 
-    fun announce(token: String, apis: JSONArray, uptimeSeconds: Long): JSONObject = call(
+    /**
+     * What we are and what we can do.
+     *
+     * The field set is the desktop one, and the values say the truth about the phone:
+     * there is no sandbox here, so the cap and the start mode are both `full`; there is
+     * no approval dialog, so `approver` is `none` and escalation is off. `applyRules`
+     * carries the rules the node binds (`SessionApi.rules`).
+     */
+    fun announce(
+        token: String,
+        apis: JSONArray,
+        uptimeSeconds: Long,
+        workdir: String?,
+        applyRules: JSONArray = JSONArray(),
+        access: String = "full",
+        allowEscalation: Boolean = false,
+        approver: String = "none",
+        base: String = "full",
+    ): JSONObject = call(
         "PUT", "/v1/announce", token, JSONObject()
             .put("apis", apis)
+            .put("applyRules", applyRules)
             .put("proto", 1)
             .put("clientVersion", VERSION)
+            .put("workdir", workdir ?: JSONObject.NULL)
+            .put("access", access)
+            .put("allowEscalation", allowEscalation)
             .put("uptimeSeconds", uptimeSeconds)
-            .put("allowEscalation", false)
+            .put("approver", approver)
+            .put("base", base)
     )
 
     /** A device event: a button press, readiness, anything. */
@@ -78,7 +101,7 @@ class NodeApi(private val base: String) {
         call("POST", "/v1/commands/$seq/result", token, payload)
 
     companion object {
-        const val VERSION = "android-0.9.3"
+        const val VERSION = "android-0.9.4"
     }
 }
 
