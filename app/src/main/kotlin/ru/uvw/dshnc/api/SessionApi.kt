@@ -95,6 +95,11 @@ class SessionApi(private val context: Context) {
             .put("lastPongAgoMs", if (store.lastPong == 0L) -1 else System.currentTimeMillis() - store.lastPong)
             .put("lastRttMs", store.lastRtt)
             .put("commandsExecuted", NodeService.executed.get())
+            // the epoch protocol's three numbers: a wrong one is what the server refuses, so
+            // they are the first thing to look at when the node "reconnects for no reason"
+            .put("epoch", NodeService.epoch() ?: JSONObject.NULL)
+            .put("clientEpoch", NodeService.clientEpoch() ?: JSONObject.NULL)
+            .put("maxCommandno", NodeService.maxCommandno())
             .put("roots", JSONArray(store.roots))
             .put("pingInterval", store.pingInterval)
             .put("pingFactor", store.pingFactor)
