@@ -7,6 +7,7 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import ru.uvw.dshnc.logic.Pipe
 import ru.uvw.dshnc.logic.Running
 import ru.uvw.dshnc.logic.Timeouts
@@ -82,6 +83,10 @@ class PipeApi (
         running.put(seq, process)
         var bytes = 0L
         val stderr = StringBuilder()
+        // the pause is enforced while the stream is still flowing: waiting out the command
+        // and only then asking "was it too long" would be a check after the fact
+        val timedOut = AtomicBoolean(false)
+        val watchdog = watchdog(process, args.timeoutMs, timedOut)
         val errDrain = Thread { tail(process.errorStream, stderr) }.apply { start() }
         val connection = try {
             connection("/v1/upload-file", seq, chunked = true)
@@ -107,15 +112,16 @@ class PipeApi (
             connection.disconnect()
         }
 
-        val waiting = wait(process, args.timeoutMs)
+        watchdog?.interrupt()
+        val waiting = wait(process)
         running.forget(seq)
         errDrain.join(1000)
         if (status !in 200..299) return err("http_$status", body.take(300).ifBlank { "сервер отказал ($status)" })
-        val verdict = Pipe.outcome(waiting.code, waiting.timedOut, stderr.toString())
+        val verdict = Pipe.outcome(waiting, timedOut.get(), stderr.toString())
         if (!verdict.ok) return err(verdict.code ?: "pipe_failed", verdict.message ?: "пайп не удался")
         return ok(JSONObject()
             .put("bytes", bytes)
-            .put("exitCode", waiting.code)
+            .put("exitCode", waiting)
             .put("stderr", Pipe.stderrTail(stderr.toString()))
             .put("hostPath", args.hostPath))
     }
@@ -135,6 +141,8 @@ class PipeApi (
         running.put(seq, process)
         var bytes = 0L
         val stderr = StringBuilder()
+        val timedOut = AtomicBoolean(false)
+        val watchdog = watchdog(process, args.timeoutMs, timedOut)
         val errDrain = Thread { tail(process.errorStream, stderr) }.apply { start() }
         val connection = try {
             connection("/v1/download-file", seq, chunked = false)
@@ -154,6 +162,15 @@ class PipeApi (
             }
             code
         } catch (error: Throwable) {
+            // a command killed by its own pause closes stdin under our feet: that is the
+            // timeout talking, not a broken transfer
+            if (timedOut.get()) {
+                stop(process)
+                running.forget(seq)
+                watchdog?.interrupt()
+                val verdict = Pipe.outcome(-1, true, stderr.toString())
+                return err(verdict.code ?: "timeout", verdict.message ?: "команда не уложилась в срок")
+            }
             stop(process)
             running.forget(seq)
             return err("transfer_failed", "данные не пришли с сервера: ${error.message ?: error.javaClass.simpleName}")
@@ -161,15 +178,16 @@ class PipeApi (
             connection.disconnect()
         }
 
-        val waiting = wait(process, args.timeoutMs)
+        watchdog?.interrupt()
+        val waiting = wait(process)
         running.forget(seq)
         errDrain.join(1000)
         if (status !in 200..299) return err("http_$status", "сервер отказал ($status)")
-        val verdict = Pipe.outcome(waiting.code, waiting.timedOut, stderr.toString())
+        val verdict = Pipe.outcome(waiting, timedOut.get(), stderr.toString())
         if (!verdict.ok) return err(verdict.code ?: "pipe_failed", verdict.message ?: "пайп не удался")
         return ok(JSONObject()
             .put("bytes", bytes)
-            .put("exitCode", waiting.code)
+            .put("exitCode", waiting)
             .put("stderr", Pipe.stderrTail(stderr.toString()))
             .put("hostPath", args.hostPath))
     }
@@ -183,19 +201,34 @@ class PipeApi (
         timeoutSeconds = if (raw.has("timeout") && !raw.isNull("timeout")) raw.optDouble("timeout", 0.0) else null,
     )
 
-    private class Waiting (val code: Int, val timedOut: Boolean)
-
-    private fun wait (process: Process, timeoutMs: Long): Waiting {
-        if (timeoutMs > 0) {
-            val done = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
-            if (!done) {
-                process.destroyForcibly()
-                return Waiting(-1, true)
+    /**
+     * The command's own pause, enforced on the running process.
+     *
+     * The clock has to run next to the stream, not after it: a command that produces
+     * nothing for ten minutes would otherwise report success at minute ten and call the
+     * pause respected.
+     */
+    private fun watchdog (process: Process, timeoutMs: Long, timedOut: AtomicBoolean): Thread? {
+        if (timeoutMs <= 0) return null
+        return Thread {
+            try {
+                Thread.sleep(timeoutMs)
+            } catch (_: InterruptedException) {
+                return@Thread
             }
-            return Waiting(process.exitValue(), false)
+            if (process.isAlive) {
+                timedOut.set(true)
+                runCatching { process.destroyForcibly() }
+            }
+        }.apply {
+            isDaemon = true
+            start()
         }
+    }
+
+    private fun wait (process: Process): Int {
         process.waitFor()
-        return Waiting(process.exitValue(), false)
+        return process.exitValue()
     }
 
     private fun start (command: String, cwd: String): Process? = try {
