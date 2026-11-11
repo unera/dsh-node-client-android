@@ -26,6 +26,7 @@ import ru.uvw.dshnc.api.NodeApi
 import ru.uvw.dshnc.api.DeviceApi
 import ru.uvw.dshnc.api.DialogApi
 import ru.uvw.dshnc.api.NotificationsApi
+import ru.uvw.dshnc.api.PipeApi
 import ru.uvw.dshnc.api.Roots
 import ru.uvw.dshnc.api.SessionApi
 import ru.uvw.dshnc.api.ShellApi
@@ -187,6 +188,9 @@ class NodeService : Service() {
         val device = DeviceApi(this)
         val shell = ShellApi(TokenStore(this).roots)
         val transfer = TransferApi(base, token)
+        // pipes stream a command's output into the request body and back: the same token,
+        // the same allowed directories, the same registry of live processes as `exec`
+        val pipe = PipeApi(base, token, TokenStore(this).roots, shell.running)
         // the generation survives a reconnect but not a reset: a reset nulls it, and the
         // announce that follows names `epoch: null`
         epoch = TokenStore(this).epoch
@@ -226,7 +230,7 @@ class NodeService : Service() {
                     clientEpoch = { clientEpoch },
                     maxCommandno = { maxCommandno },
                     onState = { from, seen, named ->
-                        onStateFrame(from, seen, named, api, token, files, session, transfer, notifications, device, shell)
+                        onStateFrame(from, seen, named, api, token, files, session, transfer, notifications, device, shell, pipe)
                     },
                     onOpen = { from ->
                         if (!isCurrent(from)) {
@@ -278,7 +282,7 @@ class NodeService : Service() {
                 startPing(channel)
                 // we wait while the channel is alive; it closed — we go for another round
                 // and reconnect, otherwise the node falls silent after a server restart
-                waitForWork(api, token, files, session, transfer, notifications, device, shell)
+                waitForWork(api, token, files, session, transfer, notifications, device, shell, pipe)
             } catch (error: ApiException) {
                 // the generation or the connection counter is out of date: the server refuses
                 // instead of repairing, and starting over is our side of the deal
@@ -328,6 +332,7 @@ class NodeService : Service() {
         notifications: NotificationsApi,
         device: DeviceApi,
         shell: ShellApi,
+        pipe: PipeApi,
     ) {
         if (!isCurrent(from)) {
             log("кадр от чужого канала: state $seen/$named")
@@ -336,7 +341,7 @@ class NodeService : Service() {
         synchronized(this) { maxCommandno = Commandno.adopt(maxCommandno, named) }
         if (!onServerState(seen)) return
         scope.launch {
-            runCatching { harvest(api, token, files, session, transfer, notifications, device, shell) }
+            runCatching { harvest(api, token, files, session, transfer, notifications, device, shell, pipe) }
             channelRef?.sendState()
         }
     }
@@ -479,17 +484,17 @@ class NodeService : Service() {
         }
     }
 
-    private suspend fun waitForWork(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
+    private suspend fun waitForWork(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi, pipe: PipeApi) {
         // Only by the server's frame: there is no polling at all. Silence in the channel
         // is normal, while closing the channel wakes the loop instantly so that we reconnect.
         while (!stopRequested && storeConnected()) {
             kotlinx.coroutines.withTimeoutOrNull(60_000L) { closedSignal.receive() }
             if (stopRequested || !storeConnected()) return
-            harvest(api, token, files, session, transfer, notifications, device, shell)
+            harvest(api, token, files, session, transfer, notifications, device, shell, pipe)
         }
     }
 
-    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi) {
+    private suspend fun harvest(api: NodeApi, token: String, files: FilesApi, session: SessionApi, transfer: TransferApi, notifications: NotificationsApi, device: DeviceApi, shell: ShellApi, pipe: PipeApi) {
         // the generation and the counter travel with the request: a mismatch is the server's
         // refusal (`409`), and that is the reset — not a break to reconnect through
         val answer = try {
@@ -543,6 +548,8 @@ class NodeService : Service() {
                 method == "exec" -> shell.handle(method, args, seq, commandSeconds)
                 method == "copyToDevice" -> transfer.download(seq, args, commandSeconds)
                 method == "copyFromDevice" -> transfer.upload(seq, args, commandSeconds)
+                method == "pipeFromDevice" -> pipe.from(seq, args, commandSeconds)
+                method == "pipeToDevice" -> pipe.to(seq, args, commandSeconds)
                 else -> files.handle(method, args)
             }
             // a dialog is answered by the person, not by this loop: the answer arrives from

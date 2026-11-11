@@ -3,6 +3,7 @@ package ru.uvw.dshnc.api
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
+import ru.uvw.dshnc.logic.Running
 import ru.uvw.dshnc.logic.Timeouts
 
 /**
@@ -20,24 +21,18 @@ import ru.uvw.dshnc.logic.Timeouts
  */
 class ShellApi (private val roots: List<String>) {
     /**
-     * Live processes by command number.
+     * Live processes by command number — shared with the pipes.
      *
-     * `#INTERNAL.CANCEL` reaches the node not with a word but with a number, so the node
-     * has to find the process by that number. Without the registry the cancel arrived into
-     * emptiness and the command ran to its end.
-     *
-     * Android has no `setsid` and the app cannot start a process group of its own: a
-     * `destroy()` stops the `sh` wrapper, while a pipeline's children may outlive it.
+     * `#INTERNAL.CANCEL` reaches the node with a number, not with a word, and a cancel does
+     * not care which method started the process.
      */
-    private val running = java.util.concurrent.ConcurrentHashMap<Long, Process>()
+    val running = Running()
 
     /** How many commands are running right now — for the FLUSH barrier and diagnostics. */
-    fun runningCount (): Int = running.size
+    fun runningCount (): Int = running.count()
 
-    fun schema (): JSONObject = JSONObject()
-        .put("name", "shell")
-        .put("version", NodeApi.VERSION)
-        .put("methods", org.json.JSONArray().put(JSONObject()
+    fun schema (): JSONObject {
+        val methods = org.json.JSONArray().put(JSONObject()
             .put("method", "exec")
             .put("description", "Run a shell command; returns stdout and stderr. Note: no sandbox on Android — the command runs with the app's own permissions")
             .put("args", JSONObject()
@@ -49,7 +44,16 @@ class ShellApi (private val roots: List<String>) {
                     .put("timeoutMs", JSONObject().put("type", "integer"))
                     .put("stdin", JSONObject().put("type", "string")))
                 .put("required", org.json.JSONArray().put("command")))
-            .put("returns", "object")))
+            .put("returns", "object"))
+        // pipes belong to the same API: they are the same `sh -c`, only the result travels
+        // as a stream instead of text
+        val pipes = PipeApi.schema(NodeApi.VERSION)
+        for (index in 0 until pipes.length()) methods.put(pipes.get(index))
+        return JSONObject()
+            .put("name", "shell")
+            .put("version", NodeApi.VERSION)
+            .put("methods", methods)
+    }
 
     fun handle (method: String, args: JSONObject, seq: Long = 0L, commandSeconds: Double = 0.0): JSONObject {
         if (method != "exec") return err("unknown_method", "нет такого метода: $method")
@@ -68,7 +72,7 @@ class ShellApi (private val roots: List<String>) {
                 .redirectErrorStream(false)
                 .start()
             // from now on the command can be cancelled by its number
-            running[seq] = process
+            running.put(seq, process)
             try {
                 // we read both streams in parallel: otherwise a full buffer of one hangs the other
                 val out = StringBuilder()
@@ -110,7 +114,7 @@ class ShellApi (private val roots: List<String>) {
                     .put("ms", spent))
             } finally {
                 // the number is free again: a late cancel must find nothing, not a dead process
-                running.remove(seq)
+                running.forget(seq)
             }
         } catch (error: Throwable) {
             err("exec_failed", error.message ?: error.javaClass.simpleName)
@@ -138,7 +142,7 @@ class ShellApi (private val roots: List<String>) {
      * SIGTERM must not keep the slot.
      */
     private fun cancel (seq: Long): JSONObject {
-        val process = running.remove(seq)
+        val process = running.take(seq)
             ?: return err("no_such_process", "команда $seq не выполняется")
         return try {
             process.destroy()
@@ -158,9 +162,9 @@ class ShellApi (private val roots: List<String>) {
      */
     private fun flush (): JSONObject {
         val deadline = System.currentTimeMillis() + FLUSH_WAIT_MS
-        while (running.isNotEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(20)
-        if (running.isNotEmpty()) {
-            return err("still_running", "после FLUSH ещё выполняются команды: ${running.size}")
+        while (!running.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        if (!running.isEmpty()) {
+            return err("still_running", "после FLUSH ещё выполняются команды: ${running.count()}")
         }
         return JSONObject().put("status", "ok").put("payload", JSONObject().put("flushed", true))
     }
