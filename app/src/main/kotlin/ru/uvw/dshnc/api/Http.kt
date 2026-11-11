@@ -6,6 +6,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.uvw.dshnc.BuildConfig
 import java.util.concurrent.TimeUnit
 
 /**
@@ -132,7 +133,9 @@ class NodeApi(private val base: String) {
         call("POST", "/v1/commands/$seq/result", token, payload)
 
     companion object {
-        const val VERSION = "android-0.10.4"
+        // Taken from the build, never written by hand: a hand-kept copy stayed at 0.10.4
+        // through two releases, so the panel showed a version nobody was running
+        val VERSION = "android-" + BuildConfig.VERSION_NAME
 
         /** The platform this client runs on: the server shows it in the panel. */
         const val PLATFORM = "android"
