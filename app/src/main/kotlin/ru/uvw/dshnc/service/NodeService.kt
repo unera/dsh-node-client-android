@@ -32,6 +32,7 @@ import ru.uvw.dshnc.api.ShellApi
 import ru.uvw.dshnc.api.TransferApi
 import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.logic.Action
+import ru.uvw.dshnc.logic.Commandno
 import ru.uvw.dshnc.logic.Generation
 import ru.uvw.dshnc.logic.Revival
 import ru.uvw.dshnc.store.TokenStore
@@ -205,9 +206,13 @@ class NodeService : Service() {
                     epoch = { epoch },
                     clientEpoch = { clientEpoch },
                     maxCommandno = { maxCommandno },
-                    onState = { seen, _ ->
+                    onState = { seen, named ->
                         // the frame carries the generation too: we adopt it when we know none,
                         // and a different one means the server has started a new life
+                        // the number goes in the same frame: "my number is higher than yours,
+                        // go fetch". Accepting it here is what keeps the claim from being
+                        // false — a lower one would be answered with one more frame each time
+                        synchronized(this@NodeService) { maxCommandno = Commandno.adopt(maxCommandno, named) }
                         if (onServerState(seen)) {
                             scope.launch {
                                 runCatching { harvest(api, token, files, session, transfer, notifications, device, shell) }
@@ -467,7 +472,11 @@ class NodeService : Service() {
             if (outcome.optString("status") == DialogApi.PENDING) continue
             submitResult(api, token, seq, outcome)
         }
-        // the batch is over: from here we wait for a frame instead of spinning the loop
+        // Numbers spent before this process started are never handed out again, and a spent
+        // number stays spent. So the answer's number is accepted, not recomputed from the
+        // batch: otherwise the claim stays below the server's and every `state` frame comes
+        // back with another one, at three frames per second.
+        synchronized(this) { maxCommandno = Commandno.adopt(maxCommandno, commandno(answer)) }
     }
 
     /**
@@ -498,15 +507,19 @@ class NodeService : Service() {
         payload.put("now", System.currentTimeMillis())
         api.result(token, seq, payload)
         executed.incrementAndGet()
-        // our own work only: the number grows by what this process really executed, and
-        // the server's `max_commandno` is never adopted — that adoption was the deleted
-        // cursor
+        // our own work: the number grows by what this process really executed. A number the
+        // server spent on a command we never received is adopted only from an empty batch,
+        // where there is nothing left to fetch — see `Commandno`
         synchronized(this) { maxCommandno = maxOf(maxCommandno, seq) }
     }
 
     /** The generation of the server process that answered — if it named one. */
     private fun serverEpoch(answer: JSONObject): Long? =
         if (answer.has("epoch") && !answer.isNull("epoch")) answer.optLong("epoch") else null
+
+    /** `max_commandno` — the last number the server has spent for this node — if it named one. */
+    private fun commandno(answer: JSONObject): Long? =
+        if (answer.has("max_commandno") && !answer.isNull("max_commandno")) answer.optLong("max_commandno") else null
 
     /**
      * How long the node has been running, not how long the phone has been up.
