@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # the runner image already carries the Android SDK; the JDK has to match the
+      # Gradle version in the wrapper, and 17 is what the project builds with
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      # a local.properties with sdk.dir is gitignored, so the SDK comes from the image
+      - name: Which SDK
+        run: echo "ANDROID_HOME=$ANDROID_HOME" && ls "$ANDROID_HOME" | head -5
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+      # the release build needs the signing key, which lives outside the repository:
+      # CI builds debug, and the APK is kept as an artifact for tests on a real phone
+      - name: Assemble debug
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dshnc-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Unit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-tests
+          path: app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: ignore
