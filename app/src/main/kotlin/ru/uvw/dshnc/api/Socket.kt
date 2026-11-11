@@ -31,17 +31,26 @@ class Socket(
     private val clientEpoch: () -> Long? = { null },
     /** The highest command number this process executed. */
     private val maxCommandno: () -> Long = { 0L },
+    /**
+     * Every callback carries this socket as its first argument.
+     *
+     * A channel lives for a while after it is closed: OkHttp finishes the handshake in the
+     * background, and its `onOpen`/`onClose` still arrive — after the service has already
+     * opened the next one. Without the identity the owner cannot tell "my channel died"
+     * from "the channel I replaced long ago finished dying", and the second one used to
+     * stop the whole node.
+     */
     /** A `state` frame from the server: the generation and the number it named. */
-    private val onState: (Long?, Long?) -> Unit = { _, _ -> },
-    private val onOpen: () -> Unit = {},
+    private val onState: (Socket, Long?, Long?) -> Unit = { _, _, _ -> },
+    private val onOpen: (Socket) -> Unit = {},
     /**
      * The channel closed. The code and the reason are the server's words: `4409` and
      * `4001 client-epoch` mean the reset, `4001 replaced` means this instance is the older
      * one and has to stop.
      */
-    private val onClose: (Int, String) -> Unit = { _, _ -> },
+    private val onClose: (Socket, Int, String) -> Unit = { _, _, _ -> },
     /** The answer to our ping: the delay in milliseconds, 0 when it cannot be computed. */
-    private val onPong: (Long) -> Unit = {},
+    private val onPong: (Socket, Long) -> Unit = { _, _ -> },
 ) {
     private val client = OkHttpClient.Builder()
         // Protocol-level ping: OkHttp sends ping frames itself and drops
@@ -71,7 +80,7 @@ class Socket(
                 // its side. The announce has already settled the generation, so the number
                 // in this frame is the current one, not a stale copy.
                 sendState(webSocket)
-                onOpen()
+                onOpen(this@Socket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -87,7 +96,7 @@ class Socket(
                         val seen = if (frame.has("epoch") && !frame.isNull("epoch")) frame.optLong("epoch") else null
                         val number =
                             if (frame.has("max_commandno") && !frame.isNull("max_commandno")) frame.optLong("max_commandno") else null
-                        onState(seen, number)
+                        onState(this@Socket, seen, number)
                     }
                     "pong" -> {
                         // the number came back the same one that went out, so RTT is
@@ -95,7 +104,7 @@ class Socket(
                         val now = System.currentTimeMillis()
                         lastPong = now
                         val sent = sentAt.remove(frame.optInt("no"))
-                        onPong(if (sent == null) 0 else now - sent)
+                        onPong(this@Socket, if (sent == null) 0 else now - sent)
                     }
                     // Nothing else exists on this socket: `state` and `pong` are the whole
                     // server vocabulary, and an unknown frame is not worth inventing an
@@ -104,11 +113,11 @@ class Socket(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                onClose(CLOSE_FAILURE, "сбой: ${t.message ?: t.javaClass.simpleName}")
+                onClose(this@Socket, CLOSE_FAILURE, "сбой: ${t.message ?: t.javaClass.simpleName}")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                onClose(code, reason)
+                onClose(this@Socket, code, reason)
             }
         })
     }

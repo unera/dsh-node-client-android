@@ -225,21 +225,16 @@ class NodeService : Service() {
                     epoch = { epoch },
                     clientEpoch = { clientEpoch },
                     maxCommandno = { maxCommandno },
-                    onState = { seen, named ->
-                        // the frame carries the generation too: we adopt it when we know none,
-                        // and a different one means the server has started a new life
-                        // the number goes in the same frame: "my number is higher than yours,
-                        // go fetch". Accepting it here is what keeps the claim from being
-                        // false — a lower one would be answered with one more frame each time
-                        synchronized(this@NodeService) { maxCommandno = Commandno.adopt(maxCommandno, named) }
-                        if (onServerState(seen)) {
-                            scope.launch {
-                                runCatching { harvest(api, token, files, session, transfer, notifications, device, shell) }
-                                channelRef?.sendState()
-                            }
-                        }
+                    onState = { from, seen, named ->
+                        onStateFrame(from, seen, named, api, token, files, session, transfer, notifications, device, shell)
                     },
-                    onOpen = {
+                    onOpen = { from ->
+                        if (!isCurrent(from)) {
+                            // the handshake of a channel we have already replaced finishes
+                            // late; marking that one open would show a live link that is not
+                            log("чужой канал открылся: client_epoch=$clientEpoch")
+                            return@Socket
+                        }
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
                         // the channel is up: from now on every attempt is a reconnect
                         channelOpen = true
@@ -248,8 +243,18 @@ class NodeService : Service() {
                         refresh()
                         runCatching { TokenStore(this@NodeService).connected = true }
                     },
-                    onClose = { code, reason -> onChannelClosed(code, reason) },
-                    onPong = { rtt ->
+                    onClose = { from, code, reason ->
+                        if (!isCurrent(from)) {
+                            // this is the channel we closed ourselves when we made the next
+                            // one; the server may even name it `replaced`. It must not touch
+                            // the `replaced` flag: that flag is what keeps the node down
+                            log("чужой канал закрылся: код $code $reason")
+                        } else {
+                            onChannelClosed(code, reason)
+                        }
+                    },
+                    onPong = { from, rtt ->
+                        if (!isCurrent(from)) return@Socket
                         runCatching {
                             TokenStore(this@NodeService).addEvent("pong", if (rtt > 0) "${rtt}мс" else "")
                         }
@@ -300,6 +305,43 @@ class NodeService : Service() {
     }
 
     /**
+     * A `state` frame arrived: "I am waiting" from the server's side.
+     *
+     * The frame carries the generation too: we adopt it when we know none, and a different
+     * one means the server has started a new life. The number goes in the same frame: "my
+     * number is higher than yours, go fetch". Accepting it here is what keeps the claim from
+     * being false — a lower one would be answered with one more frame each time.
+     *
+     * A channel we have already replaced keeps talking for a moment, and its frames are
+     * history rather than news: acting on them resets the generation of the channel that is
+     * actually alive.
+     */
+    private fun onStateFrame(
+        from: Socket,
+        seen: Long?,
+        named: Long?,
+        api: NodeApi,
+        token: String,
+        files: FilesApi,
+        session: SessionApi,
+        transfer: TransferApi,
+        notifications: NotificationsApi,
+        device: DeviceApi,
+        shell: ShellApi,
+    ) {
+        if (!isCurrent(from)) {
+            log("кадр от чужого канала: state $seen/$named")
+            return
+        }
+        synchronized(this) { maxCommandno = Commandno.adopt(maxCommandno, named) }
+        if (!onServerState(seen)) return
+        scope.launch {
+            runCatching { harvest(api, token, files, session, transfer, notifications, device, shell) }
+            channelRef?.sendState()
+        }
+    }
+
+    /**
      * The generation the server named in a `state` frame.
      *
      * A frame carrying a foreign generation means the server lives in another life, and that
@@ -332,6 +374,10 @@ class NodeService : Service() {
         when (Generation.onClose(code, reason)) {
             Action.STOP -> {
                 runCatching { TokenStore(this).addEvent("replaced", text) }
+                // only a channel we still hold reaches this line: the stale ones are filtered
+                // above, and that filter is what keeps our own replacement from switching the
+                // node off for hours
+                log("вытеснен другим экземпляром: $text — узел спит до ручного включения")
                 // persist it before stopping: stopping alone means nothing, the ten-minute
                 // alarm revives the process and the two instances ping-pong forever
                 runCatching { TokenStore(this).replaced = true }
@@ -570,6 +616,9 @@ class NodeService : Service() {
         if (started == 0L) return 0
         return ((android.os.SystemClock.elapsedRealtime() - started) / 1000).toLong()
     }
+
+    /** Is this the channel the loop holds right now, or one left over from a previous round? */
+    private fun isCurrent(socket: Socket): Boolean = socket === channelRef
 
     /** One line in the on-disk log: the process may be gone before anyone asks it anything. */
     private fun log(text: String) {
