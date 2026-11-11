@@ -107,6 +107,14 @@ class PipeApi (
             // the process is writing into a pipe nobody reads any more: it would hang forever
             stop(process)
             running.forget(seq)
+            watchdog?.interrupt()
+            // a command killed by its own pause breaks the stream under our feet: that is the
+            // timeout talking, not a broken transfer — and the reader must not hear
+            // "transfer_failed" for a command that simply ran too long
+            if (timedOut.get()) {
+                val verdict = Pipe.outcome(-1, true, stderr.toString())
+                return err(verdict.code ?: "timeout", verdict.message ?: "команда не уложилась в срок")
+            }
             return err("transfer_failed", "поток не дошёл до сервера: ${error.message ?: error.javaClass.simpleName}")
         } finally {
             connection.disconnect()
