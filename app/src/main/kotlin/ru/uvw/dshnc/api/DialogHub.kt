@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import ru.uvw.dshnc.AskActivity
 import ru.uvw.dshnc.AskPressReceiver
 import ru.uvw.dshnc.DialogListActivity
+import ru.uvw.dshnc.PopupPermission
 import ru.uvw.dshnc.R
 import ru.uvw.dshnc.logic.AskLogic
 import ru.uvw.dshnc.logic.AskRequest
@@ -237,13 +238,9 @@ object DialogHub {
 
     /**
      * A full screen intent needs the permission, and since Android 14 the system decides
-     * whether this app still has it.
+     * whether this app still has it. The same answer the settings row shows comes from here.
      */
-    private fun fullScreenAllowed (context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        return manager.canUseFullScreenIntent()
-    }
+    private fun fullScreenAllowed (context: Context): Boolean = PopupPermission.allowed(context)
 
     /**
      * The overall look as a colour: grey, blue or red.

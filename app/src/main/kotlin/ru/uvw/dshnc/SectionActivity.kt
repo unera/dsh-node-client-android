@@ -237,6 +237,20 @@ class SectionActivity : AppCompatActivity() {
             getString(R.string.help_overlay),
             { openOverlaySettings() },
         ))
+        push(Ui.divider(this))
+        // the one thing about pop-ups that used to sit on the main screen: it is a
+        // permission, so it belongs next to the others, and a tap on "denied" leads to the
+        // system screen that grants it
+        val popup = PopupPermission.allowed(this)
+        val popupTap: (() -> Unit)? = if (popup) null else ({ PopupPermission.open(this) })
+        push(Ui.itemEx(
+            this,
+            getString(R.string.menu_popup),
+            getString(if (popup) R.string.popup_allowed else R.string.popup_denied),
+            Ui.stateColor(popup),
+            getString(R.string.help_popup),
+            popupTap,
+        ))
     }
 
     override fun onResume () {

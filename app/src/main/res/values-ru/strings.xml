@@ -76,7 +76,9 @@
     <string name="roots_many">каталогов</string>
     <string name="roots_where">где узлу разрешено читать и писать</string>
     <string name="menu_camera">Камера</string>
+    <string name="menu_popup">Всплывающие вопросы</string>
     <string name="help_camera">нужна для снимка по команде (camera_snap)</string>
+    <string name="help_popup">если запрещено, вопрос ждёт в шторке уведомлений, а не на экране</string>
     <string name="help_camera_settings">если диалог не появился: Настройки → Приложения → dshnc → Разрешения → Камера</string>
     <string name="dialog_channel">Вопросы</string>
     <string name="dialog_default_title">Вопрос</string>
