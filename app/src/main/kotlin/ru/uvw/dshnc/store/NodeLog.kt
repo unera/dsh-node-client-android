@@ -54,9 +54,16 @@ object NodeLog {
     }
 
     private fun trim(target: File) {
-        val all = target.readLines()
-        target.writeText(all.drop(all.size / 2).joinToString("\n", postfix = "\n"))
+        target.writeText(rotated(target.readLines()).joinToString("\n", postfix = "\n"))
     }
+
+    /**
+     * What survives a trim: the newer half.
+     *
+     * Kept pure and apart from the file so that the rule can be checked without a phone:
+     * the interesting part is not the write but the choice of what to drop.
+     */
+    fun rotated(lines: List<String>): List<String> = lines.drop(lines.size / 2)
 
     /**
      * What the network looks like right now: "wifi/validated", "cell/not-validated",

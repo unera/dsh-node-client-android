@@ -33,8 +33,10 @@ import ru.uvw.dshnc.api.ShellApi
 import ru.uvw.dshnc.api.TransferApi
 import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.logic.Action
+import ru.uvw.dshnc.logic.ChannelState
 import ru.uvw.dshnc.logic.Commandno
 import ru.uvw.dshnc.logic.Generation
+import ru.uvw.dshnc.logic.Link
 import ru.uvw.dshnc.logic.Revival
 import ru.uvw.dshnc.store.NodeLog
 import ru.uvw.dshnc.store.TokenStore
@@ -548,8 +550,8 @@ class NodeService : Service() {
                 method == "exec" -> shell.handle(method, args, seq, commandSeconds)
                 method == "copyToDevice" -> transfer.download(seq, args, commandSeconds)
                 method == "copyFromDevice" -> transfer.upload(seq, args, commandSeconds)
-                method == "pipeFromDevice" -> pipe.from(seq, args, commandSeconds)
-                method == "pipeToDevice" -> pipe.to(seq, args, commandSeconds)
+                method == "pipeFromDevice" -> pipe.from(seq, PipeApi.raw(args), commandSeconds).toJson()
+                method == "pipeToDevice" -> pipe.to(seq, PipeApi.raw(args), commandSeconds).toJson()
                 else -> files.handle(method, args)
             }
             // a dialog is answered by the person, not by this loop: the answer arrives from
@@ -633,10 +635,10 @@ class NodeService : Service() {
     }
 
     /** The state word the notification carries: it follows the channel, nothing else. */
-    private fun stateText(): String = when {
-        channelOpen -> getString(R.string.status_connected)
-        everOpen -> getString(R.string.status_reconnecting)
-        else -> getString(R.string.status_connecting)
+    private fun stateText(): String = when (ChannelState.of(channelOpen, everOpen)) {
+        Link.CONNECTED -> getString(R.string.status_connected)
+        Link.RESTORING -> getString(R.string.status_reconnecting)
+        Link.CONNECTING -> getString(R.string.status_connecting)
     }
 
     /** Show the state that is true right now. */

@@ -7,7 +7,6 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import ru.uvw.dshnc.logic.Pipe
 import ru.uvw.dshnc.logic.Running
 import ru.uvw.dshnc.logic.Timeouts
@@ -31,8 +30,34 @@ class PipeApi (
     private val token: String,
     private val roots: List<String>,
     private val running: Running,
+    /** The shell to run: `/system/bin/sh` on the phone, a plain `sh` in a JVM test. */
+    private val shell: String = "/system/bin/sh",
 ) {
+    /**
+     * The outcome of a pipe, without JSON.
+     *
+     * `org.json` does not exist off the phone (unit tests see Android stubs that throw), and
+     * a transport that can only be checked on a device is checked never. The conversion to
+     * the wire shape lives in `toJson`, where the service needs it.
+     */
+    data class Result (val ok: Boolean, val code: String? = null, val message: String? = null, val payload: Map<String, Any> = emptyMap()) {
+        fun toJson (): JSONObject = if (ok) {
+            JSONObject().put("status", "ok").put("payload", JSONObject(payload as Map<*, *>))
+        } else {
+            JSONObject().put("status", "error").put("code", code ?: "pipe_failed").put("message", message ?: "пайп не удался")
+        }
+    }
+
     companion object {
+        /** The JSON arguments as plain values: the transport itself never sees JSON. */
+        fun raw (raw: JSONObject): Pipe.Raw = Pipe.Raw(
+            command = raw.optString("command"),
+            hostPath = raw.optString("hostPath"),
+            cwd = raw.optString("cwd"),
+            timeoutMs = if (raw.has("timeoutMs") && !raw.isNull("timeoutMs")) raw.optDouble("timeoutMs", 0.0) else null,
+            timeoutSeconds = if (raw.has("timeout") && !raw.isNull("timeout")) raw.optDouble("timeout", 0.0) else null,
+        )
+
         /** A pipe of a whole backup is not a failure: the pause must be generous. */
         private const val IDLE_READ_TIMEOUT_MS = 120_000
         private const val MIN_READ_TIMEOUT_MS = 30_000
@@ -69,24 +94,17 @@ class PipeApi (
     }
 
     /** The node gives: the process's stdout goes into the request body. */
-    fun from (seq: Long, raw: JSONObject, commandSeconds: Double = 0.0): JSONObject {
+    fun from (seq: Long, raw: Pipe.Raw, commandSeconds: Double = 0.0): Result {
         val args = try {
-            Pipe.args(rawArgs(raw), "from")
+            Pipe.args(raw, "from")
         } catch (error: Pipe.BadArgs) {
             return err(error.code, error.message ?: "плохие аргументы")
         }
         val cwd = args.cwd ?: roots.firstOrNull() ?: "/storage/emulated/0"
         if (!allowed(cwd)) return err("path_denied", "каталог $cwd вне разрешённых: ${roots.joinToString(", ")}")
-        val readTimeout = readTimeout(raw, commandSeconds, args.timeoutMs)
-
         val process = start(args.command, cwd) ?: return err("pipe_failed", "не смог запустить команду")
         running.put(seq, process)
-        var bytes = 0L
         val stderr = StringBuilder()
-        // the pause is enforced while the stream is still flowing: waiting out the command
-        // and only then asking "was it too long" would be a check after the fact
-        val timedOut = AtomicBoolean(false)
-        val watchdog = watchdog(process, args.timeoutMs, timedOut)
         val errDrain = Thread { tail(process.errorStream, stderr) }.apply { start() }
         val connection = try {
             connection("/v1/upload-file", seq, chunked = true)
@@ -95,62 +113,60 @@ class PipeApi (
             running.forget(seq)
             return err("no_server", error.message ?: "адрес сервера неизвестен")
         }
-        var status = 0
-        var body = ""
         try {
-            process.outputStream.close()
-            connection.outputStream.use { out -> process.inputStream.use { input -> bytes = pump(input, out) } }
-            status = connection.responseCode
-            body = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                ?.bufferedReader()?.readText().orEmpty()
-        } catch (error: Throwable) {
-            // the process is writing into a pipe nobody reads any more: it would hang forever
-            stop(process)
-            running.forget(seq)
-            watchdog?.interrupt()
-            // a command killed by its own pause breaks the stream under our feet: that is the
-            // timeout talking, not a broken transfer — and the reader must not hear
-            // "transfer_failed" for a command that simply ran too long
-            if (timedOut.get()) {
-                val verdict = Pipe.outcome(-1, true, stderr.toString())
-                return err(verdict.code ?: "timeout", verdict.message ?: "команда не уложилась в срок")
+            // the command gets no input here: its stdin is closed before anything flows
+            runCatching { process.outputStream.close() }
+            val flow = flow(process.inputStream, connection.outputStream, process, args.timeoutMs)
+            if (flow.timedOut) {
+                stop(process)
+                return err("timeout", Pipe.outcome(-1, true, stderr.toString()).message ?: "команда не уложилась в срок")
             }
+            if (flow.error != null) {
+                stop(process)
+                return err(
+                    "transfer_failed",
+                    "поток не дошёл до сервера: ${flow.error.message ?: flow.error.javaClass.simpleName}",
+                )
+            }
+            // the terminating chunk goes out only when the body is closed: without it the
+            // server keeps waiting for data that will never come
+            runCatching { connection.outputStream.close() }
+            val status = connection.responseCode
+            val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()?.readText().orEmpty()
+            val exitCode = wait(process)
+            errDrain.join(1000)
+            if (status !in 200..299) return err("http_$status", body.take(300).ifBlank { "сервер отказал ($status)" })
+            val verdict = Pipe.outcome(exitCode, false, stderr.toString())
+            if (!verdict.ok) return err(verdict.code ?: "pipe_failed", verdict.message ?: "пайп не удался")
+            return Result(true, payload = mapOf(
+                "bytes" to flow.bytes,
+                "exitCode" to exitCode,
+                "stderr" to Pipe.stderrTail(stderr.toString()),
+                "hostPath" to args.hostPath,
+            ))
+        } catch (error: Throwable) {
+            stop(process)
             return err("transfer_failed", "поток не дошёл до сервера: ${error.message ?: error.javaClass.simpleName}")
         } finally {
+            running.forget(seq)
+            errDrain.join(500)
             connection.disconnect()
         }
-
-        watchdog?.interrupt()
-        val waiting = wait(process)
-        running.forget(seq)
-        errDrain.join(1000)
-        if (status !in 200..299) return err("http_$status", body.take(300).ifBlank { "сервер отказал ($status)" })
-        val verdict = Pipe.outcome(waiting, timedOut.get(), stderr.toString())
-        if (!verdict.ok) return err(verdict.code ?: "pipe_failed", verdict.message ?: "пайп не удался")
-        return ok(JSONObject()
-            .put("bytes", bytes)
-            .put("exitCode", waiting)
-            .put("stderr", Pipe.stderrTail(stderr.toString()))
-            .put("hostPath", args.hostPath))
     }
 
     /** The node takes: the response body goes into the process's stdin. */
-    fun to (seq: Long, raw: JSONObject, commandSeconds: Double = 0.0): JSONObject {
+    fun to (seq: Long, raw: Pipe.Raw, commandSeconds: Double = 0.0): Result {
         val args = try {
-            Pipe.args(rawArgs(raw), "to")
+            Pipe.args(raw, "to")
         } catch (error: Pipe.BadArgs) {
             return err(error.code, error.message ?: "плохие аргументы")
         }
         val cwd = args.cwd ?: roots.firstOrNull() ?: "/storage/emulated/0"
         if (!allowed(cwd)) return err("path_denied", "каталог $cwd вне разрешённых: ${roots.joinToString(", ")}")
-        val readTimeout = readTimeout(raw, commandSeconds, args.timeoutMs)
-
         val process = start(args.command, cwd) ?: return err("pipe_failed", "не смог запустить команду")
         running.put(seq, process)
-        var bytes = 0L
         val stderr = StringBuilder()
-        val timedOut = AtomicBoolean(false)
-        val watchdog = watchdog(process, args.timeoutMs, timedOut)
         val errDrain = Thread { tail(process.errorStream, stderr) }.apply { start() }
         val connection = try {
             connection("/v1/download-file", seq, chunked = false)
@@ -159,79 +175,77 @@ class PipeApi (
             running.forget(seq)
             return err("no_server", error.message ?: "адрес сервера неизвестен")
         }
-        val status = try {
-            val code = connection.responseCode
-            if (code in 200..299) {
-                connection.inputStream.use { input ->
-                    // closing the output gives the script its EOF — a `sh` reading stdin
-                    // would otherwise wait forever
-                    process.outputStream.use { out -> bytes = pump(input, out) }
-                }
-            }
-            code
-        } catch (error: Throwable) {
-            // a command killed by its own pause closes stdin under our feet: that is the
-            // timeout talking, not a broken transfer
-            if (timedOut.get()) {
+        try {
+            val status = connection.responseCode
+            if (status !in 200..299) {
                 stop(process)
-                running.forget(seq)
-                watchdog?.interrupt()
-                val verdict = Pipe.outcome(-1, true, stderr.toString())
-                return err(verdict.code ?: "timeout", verdict.message ?: "команда не уложилась в срок")
+                return err("http_$status", "сервер отказал ($status)")
             }
+            // closing stdin at the end gives the script its EOF — a `sh` reading stdin would
+            // otherwise wait forever for data that will never come
+            val flow = flow(connection.inputStream, process.outputStream, process, args.timeoutMs)
+            runCatching { process.outputStream.close() }
+            if (flow.timedOut) {
+                stop(process)
+                return err("timeout", Pipe.outcome(-1, true, stderr.toString()).message ?: "команда не уложилась в срок")
+            }
+            if (flow.error != null) {
+                stop(process)
+                return err(
+                    "transfer_failed",
+                    "данные не пришли с сервера: ${flow.error.message ?: flow.error.javaClass.simpleName}",
+                )
+            }
+            val exitCode = wait(process)
+            errDrain.join(1000)
+            val verdict = Pipe.outcome(exitCode, false, stderr.toString())
+            if (!verdict.ok) return err(verdict.code ?: "pipe_failed", verdict.message ?: "пайп не удался")
+            return Result(true, payload = mapOf(
+                "bytes" to flow.bytes,
+                "exitCode" to exitCode,
+                "stderr" to Pipe.stderrTail(stderr.toString()),
+                "hostPath" to args.hostPath,
+            ))
+        } catch (error: Throwable) {
             stop(process)
-            running.forget(seq)
             return err("transfer_failed", "данные не пришли с сервера: ${error.message ?: error.javaClass.simpleName}")
         } finally {
+            running.forget(seq)
+            errDrain.join(500)
             connection.disconnect()
         }
-
-        watchdog?.interrupt()
-        val waiting = wait(process)
-        running.forget(seq)
-        errDrain.join(1000)
-        if (status !in 200..299) return err("http_$status", "сервер отказал ($status)")
-        val verdict = Pipe.outcome(waiting, timedOut.get(), stderr.toString())
-        if (!verdict.ok) return err(verdict.code ?: "pipe_failed", verdict.message ?: "пайп не удался")
-        return ok(JSONObject()
-            .put("bytes", bytes)
-            .put("exitCode", waiting)
-            .put("stderr", Pipe.stderrTail(stderr.toString()))
-            .put("hostPath", args.hostPath))
     }
 
-    /** The JSON arguments as plain values: the decisions themselves do not know about JSON. */
-    private fun rawArgs (raw: JSONObject): Pipe.Raw = Pipe.Raw(
-        command = raw.optString("command"),
-        hostPath = raw.optString("hostPath"),
-        cwd = raw.optString("cwd"),
-        timeoutMs = if (raw.has("timeoutMs") && !raw.isNull("timeoutMs")) raw.optDouble("timeoutMs", 0.0) else null,
-        timeoutSeconds = if (raw.has("timeout") && !raw.isNull("timeout")) raw.optDouble("timeout", 0.0) else null,
-    )
+    private class Flow (val bytes: Long, val timedOut: Boolean, val error: Throwable?)
 
     /**
-     * The command's own pause, enforced on the running process.
+     * Move the stream while the clock runs — the pause is about the stream, not about its end.
      *
-     * The clock has to run next to the stream, not after it: a command that produces
-     * nothing for ten minutes would otherwise report success at minute ten and call the
-     * pause respected.
+     * The reading happens in its own thread on purpose. A command is `sh -c ...`, and killing
+     * `sh` does not kill its children: `sh -c "echo start; sleep 30"` leaves `sleep` holding
+     * the same pipe, so a blocked `read` would not notice the kill at all. A test on a plain
+     * Linux box showed exactly that — 5 s of sleep with a 300 ms pause spent the whole 5 s.
+     * Here the wait has a deadline, and when it passes the process is killed, the sink is
+     * closed and the reader is abandoned: it ends by itself as soon as it touches the closed
+     * sink, or when the leftover child finally exits.
      */
-    private fun watchdog (process: Process, timeoutMs: Long, timedOut: AtomicBoolean): Thread? {
-        if (timeoutMs <= 0) return null
-        return Thread {
-            try {
-                Thread.sleep(timeoutMs)
-            } catch (_: InterruptedException) {
-                return@Thread
-            }
-            if (process.isAlive) {
-                timedOut.set(true)
-                runCatching { process.destroyForcibly() }
-            }
+    private fun flow (source: InputStream, sink: OutputStream, process: Process, timeoutMs: Long): Flow {
+        var bytes = 0L
+        var error: Throwable? = null
+        val reader = Thread {
+            runCatching { bytes = pump(source, sink) }.onFailure { error = it }
         }.apply {
             isDaemon = true
             start()
         }
+        reader.join(if (timeoutMs > 0) timeoutMs else 0)
+        if (reader.isAlive) {
+            runCatching { process.destroyForcibly() }
+            runCatching { sink.close() }
+            runCatching { source.close() }
+            return Flow(bytes, true, null)
+        }
+        return Flow(bytes, false, error)
     }
 
     private fun wait (process: Process): Int {
@@ -240,7 +254,7 @@ class PipeApi (
     }
 
     private fun start (command: String, cwd: String): Process? = try {
-        ProcessBuilder("/system/bin/sh", "-c", command)
+        ProcessBuilder(shell, "-c", command)
             .directory(File(cwd))
             .redirectErrorStream(false)
             .start()
@@ -280,10 +294,10 @@ class PipeApi (
     }
 
     /** The pause of the command, clamped: a pipe may legitimately outlive the default. */
-    private fun readTimeout (raw: JSONObject, commandSeconds: Double, timeoutMs: Long): Int {
+    private fun readTimeout (raw: Pipe.Raw, commandSeconds: Double, timeoutMs: Long): Int {
         val asked = when {
             timeoutMs > 0 -> timeoutMs.toInt()
-            else -> Timeouts.resolveMs(raw, commandSeconds) ?: IDLE_READ_TIMEOUT_MS
+            else -> Timeouts.resolveMs(raw.timeoutMs, raw.timeoutSeconds, commandSeconds) ?: IDLE_READ_TIMEOUT_MS
         }
         return asked.coerceIn(MIN_READ_TIMEOUT_MS, MAX_READ_TIMEOUT_MS)
     }
@@ -338,8 +352,5 @@ class PipeApi (
         }
     }
 
-    private fun ok (payload: JSONObject) = JSONObject().put("status", "ok").put("payload", payload)
-
-    private fun err (code: String, message: String) = JSONObject()
-        .put("status", "error").put("code", code).put("message", message)
+    private fun err (code: String, message: String) = Result(false, code, message)
 }
