@@ -661,7 +661,12 @@ class NodeService : Service() {
         manager.notify(NOTIFICATION_ID, notification(text))
     }
 
-    private fun notification(text: String): Notification {
+    /**
+     * The row in the shade: the node name, the state word, the way out and a tap that opens
+     * the app. Internal instead of private so that a Robolectric test can look at what a
+     * person actually sees — the tap used to do nothing at all.
+     */
+    internal fun notification(text: String): Notification {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(

@@ -37,6 +37,14 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged manifest and resources: without them the tests
+            // see an empty application and every Android class throws "not mocked"
+            isIncludeAndroidResources = true
+        }
+    }
+
     buildFeatures {
         // версию печатаем на экране: при отладке по скриншотам это первое, что нужно
         buildConfig = true
@@ -60,5 +68,9 @@ dependencies {
     // сканер QR: готовый экран камеры, без сервисов Google
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     testImplementation("junit:junit:4.13.2")
+    // Android on the JVM: the services, the notification and the connectivity manager are
+    // only checkable with it, and the network to mavenCentral is there
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.test:core:1.6.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
