@@ -35,19 +35,34 @@ object NodeLog {
     /** Append one line. Never throws: a log that breaks the node is worse than no log. */
     @Synchronized
     fun write(context: Context, text: String) {
+        append(file(context), text)
+    }
+
+    /**
+     * Append one line to a file, rotating when the file outgrows `limit`.
+     *
+     * Separate from the context so that the file rules — the cap, the format, the choice of
+     * what to throw away — can be checked in a unit test on a temporary file instead of on a
+     * phone.
+     */
+    @Synchronized
+    fun append (target: File, text: String, limit: Int = LIMIT) {
         runCatching {
-            val target = file(context)
             target.parentFile?.mkdirs()
-            if (target.length() > LIMIT) trim(target)
+            if (target.length() > limit) trim(target)
             target.appendText("${stamp.format(Date())}  $text\n")
         }
     }
 
-    /** The last [lines] lines, oldest first. */
-    fun read(context: Context, lines: Int = 100): List<String> {
-        val list = runCatching { file(context).readLines() }.getOrElse { emptyList() }
+    /** The last [lines] lines of a file, oldest first. */
+    @Synchronized
+    fun tail (target: File, lines: Int): List<String> {
+        val list = runCatching { target.readLines() }.getOrElse { emptyList() }
         return if (list.size <= lines) list else list.takeLast(lines)
     }
+
+    /** The last [lines] lines, oldest first. */
+    fun read(context: Context, lines: Int = 100): List<String> = tail(file(context), lines)
 
     fun clear(context: Context) {
         runCatching { file(context).writeText("") }

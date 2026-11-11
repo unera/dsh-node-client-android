@@ -107,7 +107,7 @@ class PipeApi (
         val stderr = StringBuilder()
         val errDrain = Thread { tail(process.errorStream, stderr) }.apply { start() }
         val connection = try {
-            connection("/v1/upload-file", seq, chunked = true)
+            connection("/v1/upload-file", seq, chunked = true, readTimeoutMs = readTimeout(raw, commandSeconds))
         } catch (error: Throwable) {
             stop(process)
             running.forget(seq)
@@ -169,7 +169,7 @@ class PipeApi (
         val stderr = StringBuilder()
         val errDrain = Thread { tail(process.errorStream, stderr) }.apply { start() }
         val connection = try {
-            connection("/v1/download-file", seq, chunked = false)
+            connection("/v1/download-file", seq, chunked = false, readTimeoutMs = readTimeout(raw, commandSeconds))
         } catch (error: Throwable) {
             stop(process)
             running.forget(seq)
@@ -274,7 +274,7 @@ class PipeApi (
      * `content-length`, because the size is not known before the command ends. The server
      * accepts that exactly for this method and refuses it for a file copy.
      */
-    private fun connection (route: String, seq: Long, chunked: Boolean): HttpURLConnection {
+    private fun connection (route: String, seq: Long, chunked: Boolean, readTimeoutMs: Int): HttpURLConnection {
         val url = URL(base.trimEnd('/') + route + "?seq=" + seq)
         return (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -289,16 +289,15 @@ class PipeApi (
             connectTimeout = 20_000
             // the answer arrives only when the stream ends, so the pause is about silence
             // in the middle of a transfer, not about the transfer as a whole
-            readTimeout = IDLE_READ_TIMEOUT_MS
+            readTimeout = readTimeoutMs
         }
     }
 
     /** The pause of the command, clamped: a pipe may legitimately outlive the default. */
-    private fun readTimeout (raw: Pipe.Raw, commandSeconds: Double, timeoutMs: Long): Int {
-        val asked = when {
-            timeoutMs > 0 -> timeoutMs.toInt()
-            else -> Timeouts.resolveMs(raw.timeoutMs, raw.timeoutSeconds, commandSeconds) ?: IDLE_READ_TIMEOUT_MS
-        }
+    private fun readTimeout (raw: Pipe.Raw, commandSeconds: Double): Int {
+        val asked = Timeouts.resolveMs(raw.timeoutMs, raw.timeoutSeconds, commandSeconds) ?: IDLE_READ_TIMEOUT_MS
+        // the socket must not give up before the command's own pause: a pipe of a backup is
+        // silent for minutes and that silence is not a broken transfer
         return asked.coerceIn(MIN_READ_TIMEOUT_MS, MAX_READ_TIMEOUT_MS)
     }
 

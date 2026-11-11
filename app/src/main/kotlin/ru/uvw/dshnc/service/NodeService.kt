@@ -33,6 +33,7 @@ import ru.uvw.dshnc.api.ShellApi
 import ru.uvw.dshnc.api.TransferApi
 import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.logic.Action
+import ru.uvw.dshnc.logic.ChannelClose
 import ru.uvw.dshnc.logic.ChannelState
 import ru.uvw.dshnc.logic.Commandno
 import ru.uvw.dshnc.logic.Generation
@@ -249,16 +250,7 @@ class NodeService : Service() {
                         refresh()
                         runCatching { TokenStore(this@NodeService).connected = true }
                     },
-                    onClose = { from, code, reason ->
-                        if (!isCurrent(from)) {
-                            // this is the channel we closed ourselves when we made the next
-                            // one; the server may even name it `replaced`. It must not touch
-                            // the `replaced` flag: that flag is what keeps the node down
-                            log("чужой канал закрылся: код $code $reason")
-                        } else {
-                            onChannelClosed(code, reason)
-                        }
-                    },
+                    onClose = { from, code, reason -> onChannelClosed(isCurrent(from), code, reason) },
                     onPong = { from, rtt ->
                         if (!isCurrent(from)) return@Socket
                         runCatching {
@@ -372,8 +364,15 @@ class NodeService : Service() {
      * `4409` and `4001 client-epoch` end this connection's life; `4001 replaced` ends the
      * service, because the newer instance of the same node owns it now.
      */
-    private fun onChannelClosed(code: Int, reason: String) {
+    private fun onChannelClosed (isCurrent: Boolean, code: Int, reason: String) {
         val text = if (reason.isBlank()) "код $code" else "код $code $reason"
+        // this is the channel we closed ourselves when we made the next one; the server may
+        // even name it `replaced`. It must not touch the `replaced` flag, the notification or
+        // the wait loop: that flag is what used to keep the node down for hours
+        if (ChannelClose.decide(isCurrent, code, reason) == Action.IGNORE) {
+            log("чужой канал закрылся: $text")
+            return
+        }
         channelOpen = false
         // the channel is gone: the wording depends on whether there was a connection to
         // restore — a start that never got through keeps saying "connecting"
