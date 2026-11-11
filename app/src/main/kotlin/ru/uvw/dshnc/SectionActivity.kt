@@ -239,10 +239,11 @@ class SectionActivity : AppCompatActivity() {
         ))
         push(Ui.divider(this))
         // the one thing about pop-ups that used to sit on the main screen: it is a
-        // permission, so it belongs next to the others, and a tap on "denied" leads to the
-        // system screen that grants it
+        // permission, so it belongs next to the others. The tap is always live: from the
+        // system screen it can be granted AND revoked, and a row that leads only one way
+        // locks the person out of their own decision
         val popup = PopupPermission.allowed(this)
-        val popupTap: (() -> Unit)? = if (popup) null else ({ PopupPermission.open(this) })
+        val popupTap: (() -> Unit)? = ({ PopupPermission.open(this) })
         push(Ui.itemEx(
             this,
             getString(R.string.menu_popup),
