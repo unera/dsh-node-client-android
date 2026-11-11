@@ -115,6 +115,9 @@ class SessionApi(private val context: Context) {
                 (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
                     .isIgnoringBatteryOptimizations(context.packageName))
             .put("lastError", store.lastError ?: JSONObject.NULL)
+            // the on-disk log, oldest first: the process may be gone, but the file is not.
+            // This is the only place that answers "why did it disappear for two hours"
+            .put("nodeLog", org.json.JSONArray(ru.uvw.dshnc.store.NodeLog.read(context, 120)))
         return JSONObject().put("status", "ok").put("payload", payload)
     }
 }

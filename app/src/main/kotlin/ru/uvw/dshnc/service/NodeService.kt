@@ -35,6 +35,7 @@ import ru.uvw.dshnc.logic.Action
 import ru.uvw.dshnc.logic.Commandno
 import ru.uvw.dshnc.logic.Generation
 import ru.uvw.dshnc.logic.Revival
+import ru.uvw.dshnc.store.NodeLog
 import ru.uvw.dshnc.store.TokenStore
 
 /**
@@ -104,9 +105,13 @@ class NodeService : Service() {
             setReferenceCounted(false)
             acquire()
         }
+        log("service onCreate: sdk=${Build.VERSION.SDK_INT}, network=${NodeLog.network(this)}, starts=${TokenStore(this).starts}")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // every start is a trace: from the background this is the alarm, and a start that
+        // never happens leaves its silence in the log instead
+        log("start id=$startId flags=$flags loop=${loop?.isActive == true}, network=${NodeLog.network(this)}")
         // Since 34 the service type has to be given on the call as well: declaring it in
         // the manifest is not enough, without it the system throws
         // MissingForegroundServiceTypeException — and that was the cause of "a failure happened again"
@@ -124,6 +129,7 @@ class NodeService : Service() {
         // the service is already running and holds the channel — a repeated start means nothing
         if (loop?.isActive == true) {
             runCatching { store.addEvent("start-повтор", "канал уже держится") }
+            log("start-повтор: канал уже держится, channelOpen=$channelOpen")
             // the label must not lie: the second launch does not open the channel, but
             // the notification has to show the real state of the first one
             refresh()
@@ -139,10 +145,12 @@ class NodeService : Service() {
         // the ten-minute alarm; otherwise the two instances ping-pong, each reviving the one
         // the other displaced. Only a person turning the node on clears it.
         if (!Revival.allowed(store.enabled, token != null, store.replaced)) {
+            log("start отказ: enabled=${store.enabled}, token=${token != null}, replaced=${store.replaced}")
             stopSelf()
             return START_NOT_STICKY
         }
         if (base == null || token == null) {
+            log("start отказ: base=${base != null}, token=${token != null}")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -155,6 +163,7 @@ class NodeService : Service() {
                 // a background service must not fail silently: we write the reason into a
                 // file that can later be fetched through files
                 CrashLog.write(this@NodeService, error)
+                log("loop упал: ${error.javaClass.simpleName}: ${error.message}")
                 notifyError(error.message)
             }
         }
@@ -189,6 +198,8 @@ class NodeService : Service() {
                 // `epoch: null` is not a gap but a statement: "everything you issued to me is
                 // dead". That is what closes the commands of the previous life on the server,
                 // and it is why the reset never repairs anything locally
+                val announceAt = System.currentTimeMillis()
+                log("announce → client_epoch=$clientEpoch, epoch=$epoch")
                 val answer = api.announce(
                     token = token,
                     apis = apis,
@@ -201,6 +212,7 @@ class NodeService : Service() {
                 // the answer names the current generation, and we asked with null: an
                 // adoption, not a change
                 adoptEpoch(serverEpoch(answer))
+                log("announce ok за ${System.currentTimeMillis() - announceAt}мс, epoch=$epoch")
                 runCatching { TokenStore(this@NodeService).connected = true }
                 // the announce only proves the server answers over HTTP: the channel is
                 // still closed, so the notification keeps naming the attempt, not the result
@@ -232,6 +244,7 @@ class NodeService : Service() {
                         // the channel is up: from now on every attempt is a reconnect
                         channelOpen = true
                         everOpen = true
+                        log("ws открыт: client_epoch=$clientEpoch, epoch=$epoch")
                         refresh()
                         runCatching { TokenStore(this@NodeService).connected = true }
                     },
@@ -270,11 +283,13 @@ class NodeService : Service() {
                 }
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message) }
                 runCatching { TokenStore(this@NodeService).connected = false }
+                log("ошибка api ${error.status}/${error.code}: ${error.message}")
                 notifyError(error.message)
                 delay(RECONNECT_MS)
             } catch (error: Throwable) {
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message ?: error.javaClass.simpleName) }
                 runCatching { TokenStore(this@NodeService).connected = false }
+                log("ошибка ${error.javaClass.simpleName}: ${error.message}")
                 notifyError(error.message)
                 delay(RECONNECT_MS)
             }
@@ -332,6 +347,9 @@ class NodeService : Service() {
         }
         channelOpen = false
         runCatching { TokenStore(this@NodeService).connected = false }
+        val state = runCatching { TokenStore(this@NodeService).lastPong }.getOrDefault(0L)
+        val silence = if (state > 0) (System.currentTimeMillis() - state) / 1000 else -1
+        log("ws закрыт: $text, тишина ${silence}с, сеть ${NodeLog.network(this)}")
         runCatching { closedSignal.trySend(Unit) }
     }
 
@@ -345,6 +363,7 @@ class NodeService : Service() {
      */
     private fun resetGeneration(code: String) {
         runCatching { TokenStore(this).addEvent("поколение", code) }
+        log("поколение сброшено: $code")
         epoch = null
         TokenStore(this).epoch = null
         runCatching { channelRef?.close() }
@@ -552,6 +571,11 @@ class NodeService : Service() {
         return ((android.os.SystemClock.elapsedRealtime() - started) / 1000).toLong()
     }
 
+    /** One line in the on-disk log: the process may be gone before anyone asks it anything. */
+    private fun log(text: String) {
+        NodeLog.write(this, text)
+    }
+
     /** The state word the notification carries: it follows the channel, nothing else. */
     private fun stateText(): String = when {
         channelOpen -> getString(R.string.status_connected)
@@ -623,7 +647,19 @@ class NodeService : Service() {
             .build()
     }
 
+    /**
+     * The system took the task away from the recent list.
+     *
+     * The service normally outlives it, so a record here is what tells "the person swiped
+     * the app away" from "Android killed the process on its own".
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        log("onTaskRemoved: приложение убрано из списка, сеть ${NodeLog.network(this)}")
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        log("service onDestroy: channelOpen=$channelOpen, client_epoch=$clientEpoch")
         instance = null
         runCatching { wakeLock?.release() }
         runCatching { wifiLock?.release() }
@@ -661,7 +697,16 @@ class NodeService : Service() {
         @Volatile private var instance: NodeService? = null
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, NodeService::class.java))
+            // since Android 12 a foreground service may not be started from the background
+            // without an exemption, and the thrown exception used to disappear into nowhere:
+            // the node then simply never came back, and nothing said why
+            runCatching { context.startForegroundService(Intent(context, NodeService::class.java)) }
+                .onFailure { error ->
+                    NodeLog.write(
+                        context,
+                        "start из фона отказан: ${error.javaClass.simpleName}: ${error.message}, сеть ${NodeLog.network(context)}",
+                    )
+                }
         }
 
         fun stop(context: Context) {
