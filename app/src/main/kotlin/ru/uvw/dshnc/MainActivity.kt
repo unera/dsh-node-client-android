@@ -1,11 +1,7 @@
 package ru.uvw.dshnc
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
-import android.app.NotificationManager
-import android.net.Uri
-import android.provider.Settings
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -163,40 +159,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Whether a question may pop up over the screen.
+     * The details line: only facts about the channel itself.
      *
-     * Since Android 14 the system decides, and the person grants it in a separate setting.
-     * Without it a question still arrives — as a notification in the shade — but it no
-     * longer pops up, and that looked like a lottery: sometimes yes, sometimes no.
+     * Whether questions pop up over the screen used to be printed here as well, with a tap
+     * that led into the system permission. That is a setting, not a property of the
+     * connection, so it lives in the menu now, next to the other permissions.
      */
-    private fun popupAllowed (): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        return manager.canUseFullScreenIntent()
-    }
-
-    private fun openPopupSettings () {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
-        runCatching {
-            startActivity(
-                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName")),
-            )
-        }
-    }
-
     private fun renderDetails () {
         val state = TokenStore(this)
         val now = System.currentTimeMillis()
         fun ago (at: Long): String = if (at <= 0L) "—" else "${(now - at) / 1000} с назад"
-        val allowed = popupAllowed()
         details.text = listOf(
             "последняя команда: ${ago(state.heartbeat)}",
             "последний пинг: ${ago(state.lastPong)}" + (if (state.lastRtt > 0) " (${state.lastRtt} мс)" else ""),
             "версия: ${BuildConfig.VERSION_NAME}",
-            getString(if (allowed) R.string.popup_allowed else R.string.popup_denied),
         ).joinToString("\n")
-        // a tap on the denied line opens the exact system screen that grants it
-        details.setOnClickListener(if (allowed) null else View.OnClickListener { openPopupSettings() })
+        details.setOnClickListener(null)
     }
 
     private fun render () {
