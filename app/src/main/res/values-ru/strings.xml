@@ -7,6 +7,7 @@
     <string name="status_disconnected">Нет связи</string>
     <string name="status_connecting">Соединяюсь…</string>
     <string name="status_connected">Соединено</string>
+    <string name="status_reconnecting">Восстанавливаю соединение…</string>
     <string name="perm_title">Разрешения</string>
     <string name="perm_notifications">Уведомления</string>
     <string name="popup_allowed">Вопросы всплывают: разрешено</string>

@@ -78,6 +78,13 @@ class NodeService : Service() {
     @Volatile private var clientEpoch: Long? = null
     /** Another instance of this node is newer: this service has nothing left to do. */
     @Volatile private var stopRequested = false
+    /**
+     * The channel has been open at least once since this service started.
+     *
+     * It is what tells the first attempt from a reconnect: at a start the notification says
+     * "connecting", and every attempt after the first connection says "restoring".
+     */
+    @Volatile private var everOpen = false
 
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -119,9 +126,7 @@ class NodeService : Service() {
             runCatching { store.addEvent("start-повтор", "канал уже держится") }
             // the label must not lie: the second launch does not open the channel, but
             // the notification has to show the real state of the first one
-            runCatching {
-                notify(getString(if (channelOpen) R.string.status_connected else R.string.status_connecting))
-            }
+            refresh()
             return START_STICKY
         }
         // every service start is a trace: it shows that the process was killed
@@ -150,7 +155,7 @@ class NodeService : Service() {
                 // a background service must not fail silently: we write the reason into a
                 // file that can later be fetched through files
                 CrashLog.write(this@NodeService, error)
-                notify(error.message ?: getString(R.string.status_disconnected))
+                notifyError(error.message)
             }
         }
         return START_STICKY
@@ -197,7 +202,9 @@ class NodeService : Service() {
                 // adoption, not a change
                 adoptEpoch(serverEpoch(answer))
                 runCatching { TokenStore(this@NodeService).connected = true }
-                notify(getString(R.string.status_connected))
+                // the announce only proves the server answers over HTTP: the channel is
+                // still closed, so the notification keeps naming the attempt, not the result
+                refresh()
                 // work arrives as a frame: we bring the channel up and wait
                 val channel = Socket(
                     base = base,
@@ -222,8 +229,10 @@ class NodeService : Service() {
                     },
                     onOpen = {
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
-                        runCatching { notify(getString(R.string.status_connected)) }
+                        // the channel is up: from now on every attempt is a reconnect
                         channelOpen = true
+                        everOpen = true
+                        refresh()
                         runCatching { TokenStore(this@NodeService).connected = true }
                     },
                     onClose = { code, reason -> onChannelClosed(code, reason) },
@@ -261,12 +270,12 @@ class NodeService : Service() {
                 }
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message) }
                 runCatching { TokenStore(this@NodeService).connected = false }
-                notify(error.message)
+                notifyError(error.message)
                 delay(RECONNECT_MS)
             } catch (error: Throwable) {
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message ?: error.javaClass.simpleName) }
                 runCatching { TokenStore(this@NodeService).connected = false }
-                notify(error.message ?: getString(R.string.status_disconnected))
+                notifyError(error.message)
                 delay(RECONNECT_MS)
             }
         }
@@ -301,7 +310,10 @@ class NodeService : Service() {
      */
     private fun onChannelClosed(code: Int, reason: String) {
         val text = if (reason.isBlank()) "код $code" else "код $code $reason"
-        runCatching { notify(getString(R.string.status_connecting)) }
+        channelOpen = false
+        // the channel is gone: the wording depends on whether there was a connection to
+        // restore — a start that never got through keeps saying "connecting"
+        refresh()
         when (Generation.onClose(code, reason)) {
             Action.STOP -> {
                 runCatching { TokenStore(this).addEvent("replaced", text) }
@@ -339,6 +351,8 @@ class NodeService : Service() {
         channelRef = null
         pingJob?.cancel()
         channelOpen = false
+        // the generation is gone, so there is a connection to restore rather than a first try
+        refresh()
         runCatching { TokenStore(this@NodeService).connected = false }
         runCatching { closedSignal.trySend(Unit) }
     }
@@ -538,6 +552,29 @@ class NodeService : Service() {
         return ((android.os.SystemClock.elapsedRealtime() - started) / 1000).toLong()
     }
 
+    /** The state word the notification carries: it follows the channel, nothing else. */
+    private fun stateText(): String = when {
+        channelOpen -> getString(R.string.status_connected)
+        everOpen -> getString(R.string.status_reconnecting)
+        else -> getString(R.string.status_connecting)
+    }
+
+    /** Show the state that is true right now. */
+    private fun refresh() {
+        runCatching { notify(stateText()) }
+    }
+
+    /**
+     * Show a failure: without a reason the label keeps saying "restoring" for hours and
+     * nobody can tell a dead network from a revoked token.
+     */
+    private fun notifyError(message: String?) {
+        val reason = message?.trim().orEmpty()
+        val text = if (reason.isEmpty()) getString(R.string.status_disconnected)
+        else getString(R.string.status_disconnected) + ": " + reason
+        runCatching { notify(text) }
+    }
+
     private fun notify(text: String) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, notification(text))
@@ -553,6 +590,16 @@ class NodeService : Service() {
         // the title is the node name, the state underneath it; next to it the turn-off
         // button, so that one does not open the app just to "turn off"
         val name = TokenStore(this).name ?: getString(R.string.app_name)
+        // a tap on the row brings the app's own window: the settings live there, and a
+        // notification that does nothing when touched is only a decoration
+        val open = android.app.PendingIntent.getActivity(
+            this,
+            0,
+            android.content.Intent(this, ru.uvw.dshnc.MainActivity::class.java).apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
         val stop = android.app.PendingIntent.getBroadcast(
             this,
             1,
@@ -564,6 +611,8 @@ class NodeService : Service() {
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(open)
             .addAction(
                 android.app.Notification.Action.Builder(
                     null,

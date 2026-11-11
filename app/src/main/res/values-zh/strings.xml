@@ -7,6 +7,7 @@
     <string name="status_disconnected">未连接</string>
     <string name="status_connecting">连接中…</string>
     <string name="status_connected">已连接</string>
+    <string name="status_reconnecting">正在恢复连接…</string>
     <string name="perm_title">权限</string>
     <string name="perm_notifications">通知</string>
     <string name="dialog_channel">提问</string>
