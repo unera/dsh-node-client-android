@@ -11,8 +11,8 @@ android {
         applicationId = "ru.uvw.dshnc"
         minSdk = 33
         targetSdk = 34
-        versionCode = 107
-        versionName = "0.10.14"
+        versionCode = 108
+        versionName = "0.10.15"
     }
 
     signingConfigs {
@@ -72,5 +72,7 @@ dependencies {
     // only checkable with it, and the network to mavenCentral is there
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.test:core:1.6.1")
+    // a real WebSocket on the JVM: the frames our socket sends and the ones it must understand
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

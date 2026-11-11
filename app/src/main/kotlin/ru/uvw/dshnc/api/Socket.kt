@@ -116,6 +116,18 @@ class Socket(
                 onClose(this@Socket, CLOSE_FAILURE, "сбой: ${t.message ?: t.javaClass.simpleName}")
             }
 
+            /**
+             * The server said goodbye: answer it.
+             *
+             * The WebSocket handshake is two-sided, and without this echo okhttp keeps the
+             * close half-done until the peer gives up on TCP — the `4001 replaced` then
+             * arrives half a minute late, which looks exactly like a hang. Found by a test
+             * that waited five seconds for a close the server had already sent.
+             */
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+            }
+
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 onClose(this@Socket, code, reason)
             }
