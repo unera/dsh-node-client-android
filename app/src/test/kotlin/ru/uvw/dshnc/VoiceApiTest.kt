@@ -72,29 +72,30 @@ class VoiceApiTest {
     }
 
     @Test
-    fun recordNeedsAPlaceToPutTheFile () {
-        val outcome = api.handle("record", JSONObject().put("hostPath", "  "), 3L, 0.0) { }
-        assertEquals("error", outcome.optString("status"))
-        assertEquals("bad_args", outcome.optString("code"))
+    fun recordAsksForNothingButItsOwnSettings () {
+        val methods = api.schema().optJSONArray("methods")!!
+        val record = (0 until methods.length())
+            .map { methods.getJSONObject(it) }
+            .first { it.optString("method") == "record" }
+        val args = record.optJSONObject("args")!!
+        // no destination on this side: the host pulls the file with files.copyFromDevice
+        assertNull(args.optJSONArray("required"))
+        val properties = args.optJSONObject("properties")!!
+        assertNotNull(properties.optJSONObject("mode"))
+        assertNotNull(properties.optJSONObject("maxSeconds"))
+        assertNotNull(properties.optJSONObject("timeout"))
+        assertNull(properties.optJSONObject("hostPath"))
     }
 
     @Test
     fun recordRefusesAModeItDoesNotKnow () {
         val outcome = api.handle(
             "record",
-            JSONObject().put("hostPath", "/tmp/voice.wav").put("mode", "машу руками"),
+            JSONObject().put("mode", "машу руками"),
             4L,
             0.0,
         ) { }
         assertEquals("bad_args", outcome.optString("code"))
-    }
-
-    @Test
-    fun recordWithoutALinkToTheServerSaysSoInsteadOfHanging () {
-        // no uploader: the node has not reached the host, and a take has nowhere to travel
-        val outcome = api.handle("record", JSONObject().put("hostPath", "/tmp/voice.wav"), 5L, 0.0) { }
-        assertEquals("error", outcome.optString("status"))
-        assertEquals("voice_unavailable", outcome.optString("code"))
     }
 
     @Test

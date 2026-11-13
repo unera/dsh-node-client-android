@@ -43,15 +43,6 @@ class VoiceApi (private val context: Context) {
     /** Commands waiting for a take right now: a cancel finds them by number. */
     private val recording = ConcurrentHashMap.newKeySet<Long>()
 
-    /**
-     * How a finished take reaches the server.
-     *
-     * The transfer itself belongs to the command loop: `/v1/upload-file` is accepted only inside
-     * a command the server issued, and that command's number is the ticket. The loop owns the
-     * token and the transfer client, so it hands this lambda in before dispatching a batch.
-     */
-    @Volatile var uploader: ((seq: Long, file: java.io.File, hostPath: String, commandSeconds: Double) -> JSONObject)? = null
-
     fun schema (): JSONObject = JSONObject()
         .put("name", "voice")
         .put("version", NodeApi.VERSION)
@@ -71,24 +62,27 @@ class VoiceApi (private val context: Context) {
                 JSONObject().put("type", "object").put("properties", JSONObject())))
             .put(method(
                 "record",
-                "Take one recording from the microphone, upload it to hostPath and report it",
+                "Take one recording from the microphone and report where the file landed on this device",
                 recordArgs(),
             )))
 
 
-    /** The `record` arguments, written apart so that the schema stays readable. */
+    /**
+     * The `record` arguments.
+     *
+     * No destination here: the command writes a file on the phone and returns its path. The host
+     * then pulls it with `files.copyFromDevice`, which is the only transfer route the server opens
+     * for a node — `/v1/upload-file` accepts `copyFromDevice` and `pipeFromDevice` and nothing
+     * else, so a `record` that tried to upload was refused by the server's own ticket check.
+     */
     private fun recordArgs (): JSONObject = JSONObject()
         .put("type", "object")
         .put("properties", JSONObject()
-            .put("hostPath", JSONObject()
-                .put("type", "string")
-                .put("description", "Where the WAV lands on the server"))
             .put("mode", JSONObject()
                 .put("type", "string")
                 .put("description", "ptt (hold to talk) or toggle (press to start, press to stop)"))
             .put("maxSeconds", JSONObject().put("type", "number"))
             .put("timeout", JSONObject().put("type", "number")))
-        .put("required", JSONArray().put("hostPath"))
 
     private fun method (name: String, description: String, args: JSONObject): JSONObject = JSONObject()
         .put("method", name)
@@ -267,14 +261,15 @@ class VoiceApi (private val context: Context) {
     }
 
     /**
-     * Take one recording from the microphone and send it to the server.
+     * Take one recording and report where it landed on the phone.
      *
-     * The command answers [PENDING] at once and reports from its own thread, for the same reason
-     * `say` does: a person may take a minute to speak, and the command loop must stay free.
+     * The command answers [PENDING] and reports from its own thread: a person may take a minute to
+     * speak, and the command loop must stay free meanwhile. Nothing is uploaded here — the file
+     * stays on the phone and the host pulls it with `files.copyFromDevice`, the only route the
+     * server opens for a node's own files.
      *
-     * A take that was recorded while nothing was waiting is already parked in [VoiceOutbox], and
-     * this command picks it up immediately — pressing the button before the host asks is not a
-     * lost recording, it is the ordinary case in a car.
+     * A take recorded before this command arrived is parked in [VoiceOutbox] and is reported at
+     * once: pressing the button before the host asks is the ordinary case in a car.
      */
     private fun record (
         args: JSONObject,
@@ -282,18 +277,12 @@ class VoiceApi (private val context: Context) {
         commandSeconds: Double,
         submit: (JSONObject) -> Unit,
     ): JSONObject {
-        val hostPath = args.optString("hostPath").trim()
-        if (hostPath.isEmpty()) return err("bad_args", "нужен непустой hostPath: куда положить запись на сервере")
         val rawMode = args.optString("mode").trim()
         val mode = if (rawMode.isEmpty()) {
             VoiceMode.PTT
         } else {
             VoiceMode.parse(rawMode) ?: return err("bad_args", "mode бывает ptt или toggle, а не $rawMode")
         }
-        val upload = uploader ?: return err(
-            "voice_unavailable",
-            "узел не подключился к серверу: запись некуда отправить",
-        )
         voiceMaxSeconds = args.optDouble("maxSeconds", 0.0)
             .takeIf { it > 0 }
             ?.coerceIn(1.0, MAX_RECORD_SECONDS)
@@ -309,21 +298,11 @@ class VoiceApi (private val context: Context) {
                     submit(err("voice_timeout", "запись не поступила за ${timeoutMs / 1000} с"))
                     return@Thread
                 }
-                val uploaded = upload(seq, take.file, hostPath, commandSeconds)
-                if (uploaded.optString("status") != "ok") {
-                    // the bytes are still good: park the take for the next command instead of
-                    // asking the person to repeat themselves
-                    VoiceOutbox.offer(take)
-                    submit(uploaded)
-                    return@Thread
-                }
-                val sent = uploaded.optJSONObject("payload")?.optLong("sent") ?: take.file.length()
                 submit(ok(JSONObject()
-                    .put("path", hostPath)
-                    .put("bytes", sent)
+                    .put("path", take.file.absolutePath)
+                    .put("bytes", take.file.length())
                     .put("seconds", take.seconds)
                     .put("mode", take.mode.ifBlank { mode.wire })))
-                runCatching { take.file.delete() }
             } finally {
                 recording.remove(seq)
                 VoiceOutbox.endWait()

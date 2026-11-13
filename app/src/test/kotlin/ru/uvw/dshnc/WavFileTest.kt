@@ -79,3 +79,44 @@ class WavFileTest {
         assertEquals(null, VoiceMode.parse("nonsense"))
     }
 }
+
+/**
+ * The take has to land where the host's `files.copyFromDevice` may read it, which is inside one
+ * of the directories the owner allowed.
+ */
+class VoiceFilesTest {
+    @Test
+    fun `the first writable root wins and gets the DSH subdirectory` () {
+        val root = java.nio.file.Files.createTempDirectory("dshnc-root").toFile()
+        val other = java.nio.file.Files.createTempDirectory("dshnc-other").toFile()
+        val privateDir = java.nio.file.Files.createTempDirectory("dshnc-private").toFile()
+        try {
+            val directory = ru.uvw.dshnc.logic.VoiceFiles.directory(
+                listOf("/nonexistent/path", root.absolutePath, other.absolutePath),
+                privateDir,
+            )
+            assertEquals(java.io.File(root, ru.uvw.dshnc.logic.VoiceFiles.SUBDIR).absolutePath, directory.absolutePath)
+            assertTrue(directory.isDirectory)
+        } finally {
+            root.deleteRecursively(); other.deleteRecursively(); privateDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `no usable root falls back to the private directory` () {
+        val privateDir = java.nio.file.Files.createTempDirectory("dshnc-private").toFile()
+        try {
+            val directory = ru.uvw.dshnc.logic.VoiceFiles.directory(listOf("/nonexistent/one"), privateDir)
+            assertEquals(java.io.File(privateDir, "voice").absolutePath, directory.absolutePath)
+            assertTrue(directory.isDirectory)
+        } finally {
+            privateDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a take is named so that a file manager sorts it by time` () {
+        val name = ru.uvw.dshnc.logic.VoiceFiles.name(1_700_000_000_000)
+        assertEquals("voice-1700000000000.wav", name)
+    }
+}

@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import ru.uvw.dshnc.logic.Recorder
 import ru.uvw.dshnc.logic.VoiceMode
+import ru.uvw.dshnc.logic.VoiceFiles
 import ru.uvw.dshnc.logic.VoiceOutbox
 import ru.uvw.dshnc.store.TokenStore
 
@@ -59,7 +60,8 @@ class VoiceChatActivity : AppCompatActivity() {
     override fun onCreate (savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = TokenStore(this)
-        recorder = Recorder(cacheDir)
+        // the take goes into a directory the host may read, not into the app cache
+        recorder = Recorder(VoiceFiles.directory(store.roots, filesDir))
         mode = VoiceMode.of(store.voiceMode)
         setContentView(build())
         VoiceOutbox.onEvent = { event, recording -> runOnUiThread { onOutbox(event, recording?.seconds) } }
@@ -244,7 +246,7 @@ class VoiceChatActivity : AppCompatActivity() {
         addLine("вы · ${"%.1f".format(take.seconds)} с")
         VoiceOutbox.offer(VoiceOutbox.Recording(take.file, take.seconds, mode.wire))
         renderIdle()
-        show(if (VoiceOutbox.isWaiting()) "отправляю…" else "записано — жду запроса от хоста")
+        show("запись сохранена: ${take.file.absolutePath}")
     }
 
     private fun renderIdle () {
@@ -279,10 +281,10 @@ class VoiceChatActivity : AppCompatActivity() {
 
     private fun onOutbox (event: VoiceOutbox.Event, seconds: Double?) {
         when (event) {
-            VoiceOutbox.Event.RECORDED -> show("записано ${"%.1f".format(seconds ?: 0.0)} с — жду запроса от хоста")
+            VoiceOutbox.Event.RECORDED -> show("запись сохранена (${"%.1f".format(seconds ?: 0.0)} с)")
             VoiceOutbox.Event.TAKEN -> {
-                if (seconds != null) addLine("→ отправлено ${"%.1f".format(seconds)} с")
-                show("отправлено")
+                if (seconds != null) addLine("→ отдано хосту ${"%.1f".format(seconds)} с")
+                show("хост забрал запись")
             }
             VoiceOutbox.Event.WAITING ->
                 show(if (VoiceOutbox.isWaiting()) "хост слушает" else "готов")

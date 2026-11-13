@@ -19,7 +19,7 @@ import kotlin.math.sqrt
  * Callbacks are invoked on the recording thread; the screen is responsible for hopping to the
  * main thread before touching views.
  */
-class Recorder (private val cacheDir: File) {
+class Recorder (private val directory: File) {
     /** What a finished recording looks like to its callers. */
     data class Result(val file: File, val seconds: Double, val bytes: Long)
 
@@ -149,7 +149,9 @@ class Recorder (private val cacheDir: File) {
         val bytes = synchronized(pcm) { pcm.toByteArray() }
         pcm.reset()
         if (bytes.isEmpty() || bytes.size < WavFile.BYTES_PER_SECOND / 10) return null
-        val file = File(cacheDir, "voice-${System.currentTimeMillis()}.wav")
+        // the take goes where the host can reach it, not into a cache it cannot see
+        directory.mkdirs()
+        val file = File(directory, VoiceFiles.name())
         return try {
             file.outputStream().use { out ->
                 out.write(WavFile.header(bytes.size))

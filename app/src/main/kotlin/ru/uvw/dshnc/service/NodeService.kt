@@ -233,17 +233,9 @@ class NodeService : Service() {
                     if (!enroll(base)) break
                     continue
                 }
+                // a take is written to the phone and pulled by the host through
+                // `files.copyFromDevice`, so the voice API needs no transfer of its own
                 val transfer = TransferApi(base, token)
-                // a voice take travels through /v1/upload-file, and that route is open only
-                // inside a command the server issued: the loop owns the ticket, so it lends
-                // the transfer to the voice API for the duration of this round
-                voice.uploader = { seq, file, hostPath, commandSeconds ->
-                    transfer.upload(
-                        seq,
-                        JSONObject().put("path", file.absolutePath).put("hostPath", hostPath),
-                        commandSeconds,
-                    )
-                }
                 // pipes stream a command's output into the request body and back: the same
                 // token, the same allowed directories, the same registry of live processes
                 val pipe = PipeApi(base, token, TokenStore(this).roots, shell.running)
