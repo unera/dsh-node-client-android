@@ -71,6 +71,36 @@ class NodeApi(private val base: String) {
     )
 
     /**
+     * Ask to be let in without a code — the same door the desktop knocks on.
+     *
+     * This is the only way back when the token was revoked in the admin panel: the request
+     * shows up in the panel among the nodes waiting for confirmation, and a person confirms
+     * it. `nonce` is what makes the approved token ours alone: the uuid travels in logs, the
+     * nonce does not.
+     */
+    fun enroll (uuid: String, name: String, nonce: String): JSONObject = call(
+        "POST", "/v1/enroll", body = JSONObject()
+            .put("uuid", uuid)
+            .put("name", name)
+            .put("aliases", JSONArray())
+            .put("clientVersion", VERSION)
+            .put("platform", PLATFORM)
+            .put("nonce", nonce)
+    )
+
+    /**
+     * Has the person confirmed the request yet?
+     *
+     * `202` with `status = pending` while nobody has looked, `200` with the token after the
+     * confirmation, `403` when the request belongs to another client, `409` when the token
+     * has already been handed out once — that one needs a new request.
+     */
+    fun enrollStatus (uuid: String, nonce: String): JSONObject = call(
+        "GET", "/v1/enroll/" + java.net.URLEncoder.encode(uuid, "UTF-8") +
+            "?nonce=" + java.net.URLEncoder.encode(nonce, "UTF-8"),
+    )
+
+    /**
      * What we are and what we can do.
      *
      * The field set is the desktop one, and the values say the truth about the phone:

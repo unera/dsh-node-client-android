@@ -5,6 +5,9 @@
     <string name="connect">连接</string>
     <string name="disconnect">断开</string>
     <string name="status_disconnected">未连接</string>
+    <string name="status_awaiting_approval">正在等待管理面板确认…</string>
+    <string name="status_need_link">没有令牌：请扫描管理面板的链接</string>
+    <string name="status_enroll_rejected">管理面板拒绝了申请</string>
     <string name="status_connecting">连接中…</string>
     <string name="status_connected">已连接</string>
     <string name="status_reconnecting">正在恢复连接…</string>

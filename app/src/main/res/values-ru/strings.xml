@@ -15,6 +15,9 @@
     <string name="status_off">Выключено</string>
     <string name="status_bad_link">нужна ссылка вида https://адрес/pair?v=…</string>
     <string name="status_no_token">сервер не выдал токен</string>
+    <string name="status_awaiting_approval">Жду подтверждения в админке…</string>
+    <string name="status_need_link">нет токена: отсканируй ссылку из админки</string>
+    <string name="status_enroll_rejected">заявку отклонили в админке</string>
     <string name="menu_title">Меню</string>
     <string name="menu_auth">Авторизация</string>
     <string name="menu_status">Статус</string>

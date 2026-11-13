@@ -226,6 +226,37 @@ class TokenStore(private val context: Context) {
         freezes = freezes + "${System.currentTimeMillis()}:$ms"
     }
 
+    /**
+     * The secret that makes an enrolment ours.
+     *
+     * A uuid is not a secret — it sits in the state file and shows up in logs — so the
+     * server hands the token of an approved request only to whoever knows this nonce. It is
+     * generated once, kept next to the token in both places, and never leaves the phone
+     * except in the two requests that need it.
+     */
+    fun clientNonce (): String {
+        read("nonce")?.let { return it }
+        val value = java.util.UUID.randomUUID().toString()
+        write("nonce", value)
+        return value
+    }
+
+    /**
+     * The node asked to be let in and waits for a person to confirm it in the admin panel.
+     *
+     * The screen shows it instead of "connecting", and the notification says it in words:
+     * without this word a node waiting for approval is indistinguishable from one that
+     * cannot reach the server at all.
+     */
+    var enrollPending: Boolean
+        get() = read("enroll") == "1"
+        set(value) = write("enroll", if (value) "1" else null)
+
+    /** When the watchman last restarted the service: the cooldown is counted from here. */
+    var watchdogAt: Long
+        get() = read("watchdog")?.toLongOrNull() ?: 0L
+        set(value) = write("watchdog", value.toString())
+
     fun clear() {
         // the address and the device identity stay: "forget the connection" is about
         // the token, not about the phone having become another phone. Otherwise
@@ -235,6 +266,8 @@ class TokenStore(private val context: Context) {
         write("token", null)
         write("name", null)
         write("enabled", null)
+        // the request that was waiting for approval belongs to the connection being forgotten
+        write("enroll", null)
         write("base", keepBase)
         write("uuid", keepId)
     }

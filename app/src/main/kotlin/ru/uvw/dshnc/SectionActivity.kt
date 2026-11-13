@@ -10,6 +10,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import ru.uvw.dshnc.service.NodeService
 import ru.uvw.dshnc.store.TokenStore
 
 /**
@@ -155,6 +156,10 @@ class SectionActivity : AppCompatActivity() {
             .setPositiveButton(getString(R.string.menu_forget)) { _, _ ->
                 store.clear()
                 store.enabled = false
+                // the store is only half of it: the running service holds the old token in
+                // memory and would keep knocking with it — that is exactly how a forgotten
+                // node went on answering 401 every five seconds for hours
+                NodeService.stop(this)
                 status.text = getString(R.string.menu_not_connected)
                 startActivity(Intent(this@SectionActivity, MainActivity::class.java))
                 finish()

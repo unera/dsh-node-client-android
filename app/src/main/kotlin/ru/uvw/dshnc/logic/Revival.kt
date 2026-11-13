@@ -13,10 +13,12 @@ package ru.uvw.dshnc.logic
  */
 object Revival {
     /**
-     * `enabled` — the person turned the node on; `hasToken` — it knows who it is;
-     * `replaced` — a newer instance owns the channel, so this one stays down until a person
-     * says otherwise. A timer is not a person.
+     * `enabled` — the person turned the node on; `hasToken` — it knows the password it knocks
+     * with; `replaced` — a newer instance owns the channel, so this one stays down until a
+     * person says otherwise (a timer is not a person); `canEnroll` — it has an address and a
+     * uuid, which is enough to ask for a token: a node whose token was revoked in the admin
+     * panel has no password left but still has every right to come up and knock.
      */
-    fun allowed(enabled: Boolean, hasToken: Boolean, replaced: Boolean): Boolean =
-        enabled && hasToken && !replaced
+    fun allowed(enabled: Boolean, hasToken: Boolean, replaced: Boolean, canEnroll: Boolean = false): Boolean =
+        enabled && !replaced && (hasToken || canEnroll)
 }

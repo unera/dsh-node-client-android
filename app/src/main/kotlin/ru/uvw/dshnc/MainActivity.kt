@@ -16,6 +16,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import ru.uvw.dshnc.api.NodeApi
+import ru.uvw.dshnc.logic.WatchAction
+import ru.uvw.dshnc.logic.Watchdog
 import ru.uvw.dshnc.service.Heartbeat
 import ru.uvw.dshnc.service.NodeService
 import ru.uvw.dshnc.store.TokenStore
@@ -138,7 +140,10 @@ class MainActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         Heartbeat.schedule(this)
-        if (store.enabled && store.token != null) NodeService.start(this)
+        // the service comes up by the same rule as everywhere else: a token to knock with, or a
+        // uuid to ask for one. Without either there is nothing to start, and the screen shows
+        // the scanner instead of pretending to connect.
+        watchdog(store)
         startTicker()
     }
 
@@ -151,7 +156,9 @@ class MainActivity : AppCompatActivity() {
             // person — that is exactly how two instances ended up ping-ponging every ten
             // minutes, each reviving the one the other had displaced
             store.replaced = false
-            if (store.token != null) NodeService.start(this) else linkRow.visibility = View.VISIBLE
+            // on means "come up if there is anything to come up with": a token, or a uuid to
+            // ask for one; with neither there is only the scanner, and render() shows it
+            watchdog(store)
         } else {
             NodeService.stop(this)
         }
@@ -184,13 +191,66 @@ class MainActivity : AppCompatActivity() {
             shape = GradientDrawable.OVAL
             setColor(if (on) Color.parseColor("#22c55e") else Color.parseColor("#4b5563"))
         }
+        renderLive()
+    }
+
+    /**
+     * What changes on its own with time: the state word, the counter, the details, the scanner
+     * button and the watchman.
+     *
+     * Called once a second, so it must not rebuild what does not change by itself — the toggle
+     * stays in `render()`.
+     */
+    private fun renderLive () {
+        val state = TokenStore(this)
         status.text = when {
-            !on -> getString(R.string.status_off)
-            store.connected -> getString(R.string.status_connected)
+            !state.enabled -> getString(R.string.status_off)
+            state.connected -> getString(R.string.status_connected)
+            // a request is waiting for a person: that is whose turn it is, and saying
+            // "connecting" instead would look like a broken network for hours
+            state.enrollPending -> getString(R.string.status_awaiting_approval)
+            state.token == null -> getString(R.string.status_need_link)
             else -> getString(R.string.status_connecting)
         }
+        // Without a token the node has nothing to knock with, and the way back in is a link
+        // from the admin panel. The button belongs on the main screen: it used to live only in
+        // the menu, and a node whose token was revoked looked like it had no way out at all.
+        linkRow.visibility = if (state.token == null) View.VISIBLE else View.GONE
         counters.text = formatUptime(NodeService.uptime())
         renderDetails()
+        watchdog(state)
+    }
+
+    /**
+     * The watchman of the background service — asked every second while the screen is open.
+     *
+     * Two different failures need two different answers, and the rule that tells them apart
+     * lives in `Watchdog` where it is covered by a test: a service that is not running has to be
+     * started, a service that runs but has gone silent for far too long has to be restarted.
+     * The second one is a guess, so it carries a cooldown — otherwise a phone without network
+     * would be restarting the service every minute.
+     */
+    private fun watchdog (state: TokenStore) {
+        val action = Watchdog.decide(
+            enabled = state.enabled,
+            // an address and an identity: a token, or a uuid to ask for one
+            known = state.base != null && (state.token != null || state.deviceId != null),
+            uptimeSeconds = NodeService.uptime(),
+            connected = state.connected,
+            silenceMs = if (state.heartbeat > 0) System.currentTimeMillis() - state.heartbeat else -1L,
+            pingSeconds = state.pingInterval,
+            stretchTimes = state.pingFactor,
+            sinceRestartMs = if (state.watchdogAt > 0) System.currentTimeMillis() - state.watchdogAt else -1L,
+        )
+        when (action) {
+            WatchAction.START -> NodeService.start(this)
+            WatchAction.RESTART -> {
+                state.watchdogAt = System.currentTimeMillis()
+                runCatching { state.addEvent("watchdog", "служба молчит — перезапускаю") }
+                NodeService.restart(this)
+            }
+            WatchAction.NONE -> {}
+        }
     }
 
     private fun formatUptime (seconds: Long): String {
@@ -203,14 +263,8 @@ class MainActivity : AppCompatActivity() {
     private fun startTicker () {
         ticker.postDelayed(object : Runnable {
             override fun run() {
-                val state = TokenStore(this@MainActivity)
-                status.text = when {
-                    !state.enabled -> getString(R.string.status_off)
-                    state.connected -> getString(R.string.status_connected)
-                    else -> getString(R.string.status_connecting)
-                }
-                counters.text = formatUptime(NodeService.uptime())
-                renderDetails()
+                // the same words the toggle and the menu render: one state, one place it is read
+                renderLive()
                 ticker.postDelayed(this, 1000)
             }
         }, 1000)
@@ -280,9 +334,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        linkRow.visibility = if (store.token == null) View.VISIBLE else View.GONE
-        // they connected through the menu — the service has to come up without the manual toggle
-        if (store.enabled && store.token != null) NodeService.start(this)
+        // they connected through the menu — the service has to come up without the manual
+        // toggle; the watchman starts it when the loop is not running at all, and the screen
+        // brings the scanner back when there is no token to knock with. `render()` does both.
         render()
     }
 

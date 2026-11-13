@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -33,6 +34,7 @@ import ru.uvw.dshnc.api.ShellApi
 import ru.uvw.dshnc.api.TransferApi
 import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.logic.Action
+import ru.uvw.dshnc.logic.AuthFailure
 import ru.uvw.dshnc.logic.ChannelClose
 import ru.uvw.dshnc.logic.ChannelState
 import ru.uvw.dshnc.logic.Commandno
@@ -57,6 +59,15 @@ class NodeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
     private var channelRef: Socket? = null
+    /**
+     * The address the running loop was built for.
+     *
+     * The token is not here on purpose: the loop reads it from the store on every round, so a
+     * password that changed while the loop was running is picked up by itself. A loop that
+     * keeps the token from its own start is exactly how a revoked token turned into ten hours
+     * of refusals: the pairing had put a fresh one in the store, and the loop never looked.
+     */
+    private var runningBase: String? = null
     // the "channel closed" signal: the wait loop wakes up on it at once instead of
     // a minute later, otherwise the node hangs without a link until the next tick
     private val closedSignal = kotlinx.coroutines.channels.Channel<Unit>(
@@ -130,8 +141,12 @@ class NodeService : Service() {
         }
         Heartbeat.schedule(this)
         val store = TokenStore(this)
-        // the service is already running and holds the channel — a repeated start means nothing
-        if (loop?.isActive == true) {
+        val base = store.base
+        val token = store.token
+        // the service is already running and holds the channel — a repeated start means
+        // nothing, but only as long as the address is the same: the token is read anew by the
+        // loop on every round, while the address is fixed when it starts
+        if (loop?.isActive == true && base == runningBase) {
             runCatching { store.addEvent("start-повтор", "канал уже держится") }
             log("start-повтор: канал уже держится, channelOpen=$channelOpen")
             // the label must not lie: the second launch does not open the channel, but
@@ -141,28 +156,35 @@ class NodeService : Service() {
         }
         // every service start is a trace: it shows that the process was killed
         store.starts = store.starts + 1
-        val base = store.base
-        val token = store.token
         // turned off by the person, or displaced by a newer instance of the same node: no
         // network either way. The displaced case is decided by the persisted flag, so nothing
         // else resurrects this instance — not the sticky restart, not an explicit start, not
         // the ten-minute alarm; otherwise the two instances ping-pong, each reviving the one
         // the other displaced. Only a person turning the node on clears it.
-        if (!Revival.allowed(store.enabled, token != null, store.replaced)) {
-            log("start отказ: enabled=${store.enabled}, token=${token != null}, replaced=${store.replaced}")
+        // A node whose token was revoked has no token but still has a uuid: it may come up and
+        // ask to be let in again, which is what the desktop client does.
+        val canEnroll = base != null && store.deviceId != null
+        if (!Revival.allowed(store.enabled, token != null, store.replaced, canEnroll)) {
+            log("start отказ: enabled=${store.enabled}, token=${token != null}, replaced=${store.replaced}, canEnroll=$canEnroll")
             stopSelf()
             return START_NOT_STICKY
         }
-        if (base == null || token == null) {
-            log("start отказ: base=${base != null}, token=${token != null}")
+        if (base == null) {
+            log("start отказ: адреса нет — нужна ссылка из админки")
             stopSelf()
             return START_NOT_STICKY
         }
         if (startedAt == 0L) startedAt = android.os.SystemClock.elapsedRealtime()
-        loop?.cancel()
+        val previous = loop
         loop = scope.launch {
             try {
-                run(base, token)
+                // the old loop reads the same stopRequested flag, so it has to be gone before
+                // this one clears it; cancellation is cooperative and a socket read may hold it
+                // for a while, which is why the wait happens here and not on the main thread
+                previous?.cancelAndJoin()
+                stopRequested = false
+                runningBase = base
+                run(base)
             } catch (error: Throwable) {
                 // a background service must not fail silently: we write the reason into a
                 // file that can later be fetched through files
@@ -174,7 +196,7 @@ class NodeService : Service() {
         return START_STICKY
     }
 
-    private suspend fun run(base: String, token: String) {
+    private suspend fun run (base: String) {
         val api = NodeApi(base)
         // what we can do: files inside the allowed directories
         val apis = JSONArray()
@@ -190,15 +212,27 @@ class NodeService : Service() {
         val notifications = NotificationsApi(this)
         val device = DeviceApi(this)
         val shell = ShellApi(TokenStore(this).roots)
-        val transfer = TransferApi(base, token)
-        // pipes stream a command's output into the request body and back: the same token,
-        // the same allowed directories, the same registry of live processes as `exec`
-        val pipe = PipeApi(base, token, TokenStore(this).roots, shell.running)
         // the generation survives a reconnect but not a reset: a reset nulls it, and the
         // announce that follows names `epoch: null`
         epoch = TokenStore(this).epoch
         while (!stopRequested) {
             try {
+                // The token is read anew on every round, and this is the whole point: a pairing
+                // or an approval may put a fresh one in the store while this loop is already
+                // running. A loop that keeps the token it started with hammers the server with
+                // a dead one — ten hours of refusals is exactly what that costs.
+                val token = TokenStore(this).token
+                if (token == null) {
+                    // no token is not the end: a node that knows its address and its uuid
+                    // knocks on the door the way the desktop client does — it asks to be
+                    // confirmed, and a person approves the request in the admin panel
+                    if (!enroll(base)) break
+                    continue
+                }
+                val transfer = TransferApi(base, token)
+                // pipes stream a command's output into the request body and back: the same
+                // token, the same allowed directories, the same registry of live processes
+                val pipe = PipeApi(base, token, TokenStore(this).roots, shell.running)
                 // every announce is a new connection generation: the counter grows, otherwise
                 // the server takes this instance for the one it has just dropped
                 clientEpoch = TokenStore(this).nextClientEpoch()
@@ -278,6 +312,13 @@ class NodeService : Service() {
                 // and reconnect, otherwise the node falls silent after a server restart
                 waitForWork(api, token, files, session, transfer, notifications, device, shell, pipe)
             } catch (error: ApiException) {
+                // the server said the token does not match any node: it was revoked in the admin
+                // panel, and no amount of retrying brings it back. The token goes, and the next
+                // round asks to be confirmed instead of knocking with a dead password.
+                if (AuthFailure.isRevoked(error.status, error.code)) {
+                    revokeToken()
+                    continue
+                }
                 // the generation or the connection counter is out of date: the server refuses
                 // instead of repairing, and starting over is our side of the deal
                 if (Generation.onRefusal(error.status, error.code) == Action.RESET) {
@@ -439,6 +480,106 @@ class NodeService : Service() {
         if (value == null || value < 0 || epoch != null) return
         epoch = value
         TokenStore(this).epoch = value
+    }
+
+    /**
+     * The token is dead: the server no longer knows it.
+     *
+     * It is dropped from the store rather than kept "just in case". The store is where both the
+     * next round and the main screen look, and that is the whole recovery: the round sees no
+     * token and enrols, the screen sees no token and shows the scanner again. A dead token left
+     * in place is what kept a phone knocking with it every five seconds for ten hours.
+     *
+     * The generation goes with it: after a revocation the generation this node knew belongs to
+     * a life that is over, and the announce that follows must say so.
+     */
+    private fun revokeToken () {
+        val store = TokenStore(this)
+        store.token = null
+        store.epoch = null
+        store.connected = false
+        epoch = null
+        runCatching { store.addEvent("токен", "отозван сервером") }
+        log("токен отозван: 401 unauthorized — заявляюсь заново")
+        refresh()
+    }
+
+    /**
+     * Ask the server to let this node in again — the same door the desktop client knocks on.
+     *
+     * The request shows up in the admin panel among the nodes waiting for confirmation, and a
+     * person approves it there. Until that happens the node waits, asking less and less often:
+     * five seconds for the first minute, then fifteen, then once a minute. The request is
+     * re-posted now and then because the panel stops showing requests that nobody refreshes.
+     *
+     * @return true when a token was obtained and the announce may be tried again
+     */
+    private suspend fun enroll (base: String): Boolean {
+        val store = TokenStore(this)
+        val uuid = store.deviceId
+        if (uuid == null) {
+            log("enroll: uuid нет — заявляться нечем, нужна ссылка из админки")
+            return false
+        }
+        val name = store.name ?: Build.MODEL ?: "android"
+        val nonce = store.clientNonce()
+        val api = NodeApi(base)
+        store.enrollPending = true
+        runCatching { store.addEvent("enroll", "заявка подана") }
+        refresh()
+        var attempt = 0
+        while (!stopRequested) {
+            attempt += 1
+            try {
+                if (attempt == 1 || attempt % 30 == 0) {
+                    val asked = api.enroll(uuid, name, nonce)
+                    log("enroll → ${asked.optString("status")}")
+                    if (asked.optString("status") == "rejected") return enrollRejected(store)
+                }
+                val answer = api.enrollStatus(uuid, nonce)
+                val token = answer.optString("token")
+                if (token.isNotBlank()) {
+                    store.token = token
+                    store.epoch = null
+                    store.enrollPending = false
+                    store.connected = false
+                    epoch = null
+                    val alias = answer.optString("alias")
+                    runCatching { store.addEvent("enroll", "подтверждено: узел ${answer.optInt("node")} $alias") }
+                    log("enroll: подтверждено, узел ${answer.optInt("node")}, alias=$alias")
+                    refresh()
+                    return true
+                }
+                if (answer.optString("status") == "rejected") return enrollRejected(store)
+                // pending: nobody has looked at the request yet, and the notification says
+                // whose turn it is instead of pretending the node is connecting
+                runCatching { refresh() }
+            } catch (error: ApiException) {
+                // the request is gone (expired, cleared) or its token was already handed out
+                // once: the next round posts it again
+                if (error.status == 404 || error.status == 409) attempt = 0
+                log("enroll ошибка ${error.status}/${error.code}: ${error.message}")
+            } catch (error: Throwable) {
+                log("enroll ошибка ${error.javaClass.simpleName}: ${error.message}")
+            }
+            delay(waitForApproval(attempt))
+        }
+        return false
+    }
+
+    private fun enrollRejected (store: TokenStore): Boolean {
+        store.enrollPending = false
+        runCatching { store.addEvent("enroll", "отклонено") }
+        log("enroll: заявку отклонили в админке")
+        notifyError(getString(R.string.status_enroll_rejected))
+        return false
+    }
+
+    /** How long to wait between enrolment polls: 5 s, then 15 s, then a minute. */
+    private fun waitForApproval (attempt: Int): Long = when {
+        attempt < 12 -> 5_000L
+        attempt < 60 -> 15_000L
+        else -> 60_000L
     }
 
 
@@ -634,10 +775,16 @@ class NodeService : Service() {
     }
 
     /** The state word the notification carries: it follows the channel, nothing else. */
-    private fun stateText(): String = when (ChannelState.of(channelOpen, everOpen)) {
-        Link.CONNECTED -> getString(R.string.status_connected)
-        Link.RESTORING -> getString(R.string.status_reconnecting)
-        Link.CONNECTING -> getString(R.string.status_connecting)
+    private fun stateText(): String = when {
+        // waiting for a person to confirm the request: the words must name whose turn it is,
+        // otherwise "connecting" runs for hours and looks like a broken network
+        runCatching { TokenStore(this).enrollPending }.getOrDefault(false) ->
+            getString(R.string.status_awaiting_approval)
+        else -> when (ChannelState.of(channelOpen, everOpen)) {
+            Link.CONNECTED -> getString(R.string.status_connected)
+            Link.RESTORING -> getString(R.string.status_reconnecting)
+            Link.CONNECTING -> getString(R.string.status_connecting)
+        }
     }
 
     /** Show the state that is true right now. */
@@ -773,6 +920,21 @@ class NodeService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, NodeService::class.java))
+        }
+
+        /**
+         * Take the service down and bring it up again.
+         *
+         * Needed when the loop is alive but stuck: stopping is not enough, the loop inside holds
+         * whatever it was busy with, and the start would answer "the channel is already held".
+         * The pause before the start is the time the system needs to destroy the old instance —
+         * starting at once lands on a service that is still on its way out.
+         */
+        fun restart(context: Context) {
+            stop(context)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                start(context)
+            }, 700)
         }
     }
 }

@@ -27,7 +27,14 @@ class Heartbeat : BroadcastReceiver() {
         // reviving the one the other displaced. Only a person clears that flag.
         // the alarm's own firing goes to disk: a hole in these records is the proof that
         // Android never woke us, and that is a different bug from "we woke up and failed"
-        val allowed = Revival.allowed(store.enabled, store.token != null, store.replaced)
+        val allowed = Revival.allowed(
+            store.enabled,
+            store.token != null,
+            store.replaced,
+            // a node without a token may still be waiting for a person to confirm its request:
+            // the approval comes while nobody is looking, so the alarm must bring it up
+            canEnroll = store.base != null && store.deviceId != null,
+        )
         NodeLog.write(context, "heartbeat сработал: allowed=$allowed, сеть ${NodeLog.network(context)}")
         if (allowed) NodeService.start(context)
         runCatching { schedule(context) }

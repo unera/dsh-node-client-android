@@ -17,6 +17,9 @@
     <string name="status_off">Off</string>
     <string name="status_bad_link">a link like https://host/pair?v=… is needed</string>
     <string name="status_no_token">the server did not issue a token</string>
+    <string name="status_awaiting_approval">Waiting for approval in the admin panel…</string>
+    <string name="status_need_link">no token: scan the link from the admin panel</string>
+    <string name="status_enroll_rejected">the request was rejected in the admin panel</string>
     <string name="menu_title">Menu</string>
     <string name="menu_auth">Authorization</string>
     <string name="menu_status">Status</string>
