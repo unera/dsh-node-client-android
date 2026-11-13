@@ -21,8 +21,9 @@ import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.api.VoiceEvents
 import ru.uvw.dshnc.logic.VoiceFiles
 import ru.uvw.dshnc.logic.VoiceOutbox
-import ru.uvw.dshnc.logic.VoiceWant
+import ru.uvw.dshnc.logic.VoiceUpload
 import ru.uvw.dshnc.store.TokenStore
+import java.io.File
 
 /**
  * The spoken chat: a conversation in the top third, one big button in the bottom third.
@@ -64,8 +65,9 @@ class VoiceChatActivity : AppCompatActivity() {
     override fun onCreate (savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = TokenStore(this)
-        // the take goes into a directory the host may read, not into the app cache
-        recorder = Recorder(VoiceFiles.directory(store.roots, filesDir))
+        // a take lives in the cache: the ordinary path uploads it and deletes it at once, so
+        // nothing of ours should accumulate in the person's shared storage
+        recorder = Recorder(cacheDir)
         mode = VoiceMode.of(store.voiceMode)
         setContentView(build())
         VoiceOutbox.onEvent = { event, recording -> runOnUiThread { onOutbox(event, recording?.seconds) } }
@@ -235,36 +237,6 @@ class VoiceChatActivity : AppCompatActivity() {
         scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
 
-    /**
-     * Tell the host that a person started speaking.
-     *
-     * The screen already records locally; this only lets the host start listening and issue the
-     * `record` command that will take the file. A failure is reported in the conversation and
-     * changes nothing else: the take stays on the phone and the next command still finds it.
-     */
-    private fun announceToHost () {
-        val base = store.base
-        val token = store.token
-        val mode = mode
-        if (base == null || token == null) {
-            addLine(VoiceWant.REFUSED_LINE)
-            return
-        }
-        Thread({
-            val outcome = runCatching { VoiceEvents(base, token).announce(mode) }
-                .getOrElse { VoiceWant.Result.Failed(it.message ?: it.javaClass.simpleName) }
-            runOnUiThread {
-                when (outcome) {
-                    is VoiceWant.Result.Accepted -> Unit
-                    is VoiceWant.Result.Failed -> {
-                        addLine(VoiceWant.REFUSED_LINE)
-                        show(outcome.reason)
-                    }
-                }
-            }
-        }, "dshnc-voice-want").start()
-    }
-
     private fun startRecording () {
         if (recorder.isRecording) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -281,9 +253,6 @@ class VoiceChatActivity : AppCompatActivity() {
         cancel.visibility = View.VISIBLE
         setState("слушаю")
         show("говорите")
-        // the host is told first and records nothing itself: the take is written here either way,
-        // so a refused or unreachable host costs the person nothing
-        announceToHost()
         // one clock per take: a second press must not leave the previous ticker running
         ticker.removeCallbacksAndMessages(null)
         tick(0)
@@ -298,9 +267,56 @@ class VoiceChatActivity : AppCompatActivity() {
             return
         }
         addLine("вы · ${"%.1f".format(take.seconds)} с")
-        VoiceOutbox.offer(VoiceOutbox.Recording(take.file, take.seconds, mode.wire))
+        setState("отправлено")
+        sendTake(take)
         renderIdle()
-        show("запись сохранена: ${take.file.absolutePath}")
+    }
+
+    /**
+     * Hand one take to the host in a single request.
+     *
+     * The press identity is minted here, once per press: the host may retry, and a retry must not
+     * turn into a second remark in the conversation. On refusal the take is not thrown away — it
+     * moves into a directory the host may read and waits for the older `record` route.
+     */
+    private fun sendTake (take: Recorder.Result) {
+        val base = store.base
+        val token = store.token
+        if (base == null || token == null) {
+            refuse(take, "узел не подключён к хосту")
+            return
+        }
+        val id = VoiceUpload.newId()
+        Thread({
+            val outcome = VoiceEvents(base, token).sendVoice(take.file, take.seconds, id)
+            runOnUiThread {
+                when (outcome) {
+                    is VoiceUpload.Result.Accepted -> {
+                        runCatching { take.file.delete() }
+                        setState("принято хостом · ${"%.1f".format(outcome.seconds ?: take.seconds)} с")
+                        show(outcome.path?.let { "на хосте: $it" } ?: "принято")
+                    }
+                    is VoiceUpload.Result.Failed -> refuse(take, outcome.reason)
+                }
+            }
+        }, "dshnc-voice-send").start()
+    }
+
+    /** The take did not land: keep it where the host can still pick it up, and say so. */
+    private fun refuse (take: Recorder.Result, reason: String) {
+        val directory = VoiceFiles.directory(store.roots, filesDir)
+        val target = File(directory, take.file.name)
+        val parked = runCatching {
+            if (target.absolutePath != take.file.absolutePath) {
+                take.file.copyTo(target, overwrite = true)
+                take.file.delete()
+            }
+            target
+        }.getOrElse { take.file }
+        VoiceOutbox.offer(VoiceOutbox.Recording(parked, take.seconds, mode.wire))
+        addLine(VoiceUpload.REFUSED_LINE)
+        show("$reason · ${parked.absolutePath}")
+        setState("хост не принял, сохранено локально")
     }
 
     private fun renderIdle () {
