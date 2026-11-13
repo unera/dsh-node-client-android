@@ -18,8 +18,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import ru.uvw.dshnc.logic.Recorder
 import ru.uvw.dshnc.logic.VoiceMode
+import ru.uvw.dshnc.api.VoiceEvents
 import ru.uvw.dshnc.logic.VoiceFiles
 import ru.uvw.dshnc.logic.VoiceOutbox
+import ru.uvw.dshnc.logic.VoiceWant
 import ru.uvw.dshnc.store.TokenStore
 
 /**
@@ -38,6 +40,8 @@ class VoiceChatActivity : AppCompatActivity() {
     private lateinit var store: TokenStore
     private lateinit var recorder: Recorder
     private lateinit var chat: LinearLayout
+    /** The line that says what the microphone is doing: «слушаю» then «отправлено хосту». */
+    private lateinit var stateLine: TextView
     private lateinit var scroller: ScrollView
     private lateinit var meter: ProgressBar
     private lateinit var hint: TextView
@@ -92,6 +96,12 @@ class VoiceChatActivity : AppCompatActivity() {
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, (8 * density).toInt(), pad, (8 * density).toInt())
+        }
+        stateLine = TextView(this).apply {
+            textSize = 18f
+            setTextColor(Color.parseColor("#93c5fd"))
+            setPadding(0, (6 * density).toInt(), 0, 0)
+            visibility = View.GONE
         }
         scroller = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -215,6 +225,46 @@ class VoiceChatActivity : AppCompatActivity() {
         talk.text = if (mode == VoiceMode.PTT) "🎤" else if (recorder.isRecording) "⏹" else "🎤"
     }
 
+    /** One line in the conversation for the microphone's state; the newest state wins. */
+    private fun setState (text: String) {
+        stateLine.text = text
+        stateLine.visibility = View.VISIBLE
+        // the state line always sits at the bottom of the conversation: remove and re-add
+        (stateLine.parent as? LinearLayout)?.removeView(stateLine)
+        chat.addView(stateLine)
+        scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /**
+     * Tell the host that a person started speaking.
+     *
+     * The screen already records locally; this only lets the host start listening and issue the
+     * `record` command that will take the file. A failure is reported in the conversation and
+     * changes nothing else: the take stays on the phone and the next command still finds it.
+     */
+    private fun announceToHost () {
+        val base = store.base
+        val token = store.token
+        val mode = mode
+        if (base == null || token == null) {
+            addLine(VoiceWant.REFUSED_LINE)
+            return
+        }
+        Thread({
+            val outcome = runCatching { VoiceEvents(base, token).announce(mode) }
+                .getOrElse { VoiceWant.Result.Failed(it.message ?: it.javaClass.simpleName) }
+            runOnUiThread {
+                when (outcome) {
+                    is VoiceWant.Result.Accepted -> Unit
+                    is VoiceWant.Result.Failed -> {
+                        addLine(VoiceWant.REFUSED_LINE)
+                        show(outcome.reason)
+                    }
+                }
+            }
+        }, "dshnc-voice-want").start()
+    }
+
     private fun startRecording () {
         if (recorder.isRecording) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -229,7 +279,11 @@ class VoiceChatActivity : AppCompatActivity() {
         }
         talk.setBackgroundColor(Color.parseColor("#dc2626"))
         cancel.visibility = View.VISIBLE
-        show(if (VoiceOutbox.isWaiting()) "говорите — хост слушает" else "говорите")
+        setState("слушаю")
+        show("говорите")
+        // the host is told first and records nothing itself: the take is written here either way,
+        // so a refused or unreachable host costs the person nothing
+        announceToHost()
         // one clock per take: a second press must not leave the previous ticker running
         ticker.removeCallbacksAndMessages(null)
         tick(0)
@@ -283,7 +337,7 @@ class VoiceChatActivity : AppCompatActivity() {
         when (event) {
             VoiceOutbox.Event.RECORDED -> show("запись сохранена (${"%.1f".format(seconds ?: 0.0)} с)")
             VoiceOutbox.Event.TAKEN -> {
-                if (seconds != null) addLine("→ отдано хосту ${"%.1f".format(seconds)} с")
+                setState(if (seconds != null) "отправлено хосту · ${"%.1f".format(seconds)} с" else "отправлено хосту")
                 show("хост забрал запись")
             }
             VoiceOutbox.Event.WAITING ->
@@ -299,7 +353,7 @@ class VoiceChatActivity : AppCompatActivity() {
         }
         meter.progress = (recorder.level * 100).toInt().coerceIn(0, 100)
         val seconds = elapsed / 10.0
-        show("говорите · ${"%.1f".format(seconds)} с")
+        show("слушаю · ${"%.1f".format(seconds)} с")
         if (mode == VoiceMode.TOGGLE) renderModeHeaderOnly()
         ticker.postDelayed({ tick(elapsed + 1) }, 100)
     }
