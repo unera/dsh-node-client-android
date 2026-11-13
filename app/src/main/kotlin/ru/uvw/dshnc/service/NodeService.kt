@@ -234,6 +234,16 @@ class NodeService : Service() {
                     continue
                 }
                 val transfer = TransferApi(base, token)
+                // a voice take travels through /v1/upload-file, and that route is open only
+                // inside a command the server issued: the loop owns the ticket, so it lends
+                // the transfer to the voice API for the duration of this round
+                voice.uploader = { seq, file, hostPath, commandSeconds ->
+                    transfer.upload(
+                        seq,
+                        JSONObject().put("path", file.absolutePath).put("hostPath", hostPath),
+                        commandSeconds,
+                    )
+                }
                 // pipes stream a command's output into the request body and back: the same
                 // token, the same allowed directories, the same registry of live processes
                 val pipe = PipeApi(base, token, TokenStore(this).roots, shell.running)
@@ -691,7 +701,7 @@ class NodeService : Service() {
                     submitResult(api, token, seq, answer)
                 }
                 method == "post" && args.has("id") -> notifications.handle(method, args)
-                method == "say" || method == "stop" || method == "caps" -> voice.handle(method, args, seq, commandSeconds) { answer ->
+                method == "say" || method == "stop" || method == "caps" || method == "record" -> voice.handle(method, args, seq, commandSeconds) { answer ->
                     submitResult(api, token, seq, answer)
                 }
                 method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args, commandSeconds)

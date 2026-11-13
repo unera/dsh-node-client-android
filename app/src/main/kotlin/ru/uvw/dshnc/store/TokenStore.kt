@@ -92,6 +92,11 @@ class TokenStore(private val context: Context) {
         get() = read("poll")?.toIntOrNull() ?: 0
         set(value) = write("poll", value.toString())
 
+    /** The voice screen's button habit: `ptt` (hold) or `toggle` (press twice). */
+    var voiceMode: String
+        get() = read("voiceMode") ?: "ptt"
+        set(value) = write("voiceMode", value)
+
     var roots: List<String>
         get() {
             val saved = read("roots")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
