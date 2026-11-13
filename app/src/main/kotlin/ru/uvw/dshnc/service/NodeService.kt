@@ -32,6 +32,7 @@ import ru.uvw.dshnc.api.Roots
 import ru.uvw.dshnc.api.SessionApi
 import ru.uvw.dshnc.api.ShellApi
 import ru.uvw.dshnc.api.TransferApi
+import ru.uvw.dshnc.api.VoiceApi
 import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.logic.Action
 import ru.uvw.dshnc.logic.AuthFailure
@@ -88,6 +89,8 @@ class NodeService : Service() {
     @Volatile private var maxCommandno: Long = 0L
     /** The `dialog.ask` dispatcher: its state lives in `DialogHub`, this is only the door. */
     private val dialog by lazy { DialogApi(this) }
+    /** Speech out loud: the engine is created on the first request, not at boot. */
+    private val voice by lazy { VoiceApi(this) }
     /** The server generation we know; null — we know none and the next announce says so. */
     @Volatile private var epoch: Long? = null
     /** The persistent connection counter, bumped by every announce. */
@@ -205,6 +208,7 @@ class NodeService : Service() {
             .put(NotificationsApi(this).schema())
             .put(dialog.schema())
             .put(DeviceApi(this).schema())
+            .put(voice.schema())
             .put(ShellApi(TokenStore(this).roots).schema())
         // the list of directories is set in the settings and lives in the node state
         val files = FilesApi(this, TokenStore(this).roots)
@@ -680,12 +684,16 @@ class NodeService : Service() {
             val outcome = when {
                 // the dialog answers for a cancel that has its number; anything else is the
                 // shell registry's business
-                method.startsWith("#") -> dialog.control(method, args) ?: shell.control(method, args)
+                method.startsWith("#") -> dialog.control(method, args) ?: voice.control(method, args)
+                    ?: shell.control(method, args)
                 method in SESSION_METHODS -> session.handle(method, args, command.optString("session").ifBlank { null })
                 method == "ask" -> dialog.handle(method, args, seq, commandSeconds) { answer ->
                     submitResult(api, token, seq, answer)
                 }
                 method == "post" && args.has("id") -> notifications.handle(method, args)
+                method == "say" || method == "stop" || method == "caps" -> voice.handle(method, args, seq, commandSeconds) { answer ->
+                    submitResult(api, token, seq, answer)
+                }
                 method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args, commandSeconds)
                 method == "exec" -> shell.handle(method, args, seq, commandSeconds)
                 method == "copyToDevice" -> transfer.download(seq, args, commandSeconds)
@@ -697,7 +705,10 @@ class NodeService : Service() {
             // a dialog is answered by the person, not by this loop: the answer arrives from
             // the thread that waits for it, through the same `submitResult` — so the loop
             // stays free and the server's cancel can still reach us
-            if (outcome.optString("status") == DialogApi.PENDING) continue
+            // both a question and a spoken sentence answer later, from their own thread
+            if (outcome.optString("status") == DialogApi.PENDING ||
+                outcome.optString("status") == VoiceApi.PENDING
+            ) continue
             submitResult(api, token, seq, outcome)
         }
         // Numbers spent before this process started are never handed out again, and a spent
@@ -868,6 +879,8 @@ class NodeService : Service() {
     }
 
     override fun onDestroy() {
+        // a service that goes away must not leave the speaker busy
+        runCatching { voice.shutdown() }
         log("service onDestroy: channelOpen=$channelOpen, client_epoch=$clientEpoch")
         instance = null
         runCatching { wakeLock?.release() }
