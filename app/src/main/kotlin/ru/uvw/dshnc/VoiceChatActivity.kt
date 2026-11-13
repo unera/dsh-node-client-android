@@ -55,6 +55,8 @@ class VoiceChatActivity : AppCompatActivity() {
     private var mode = VoiceMode.PTT
     /** True while the person's finger is down in the radio mode: a hold, not a press. */
     private var holding = false
+    /** When the microphone opened, for the diagnostics on the wire: 0 means "not known". */
+    private var recordStartedAt = 0L
 
     private val permissionRequest = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
@@ -249,6 +251,7 @@ class VoiceChatActivity : AppCompatActivity() {
             show(error)
             return
         }
+        recordStartedAt = System.currentTimeMillis()
         talk.setBackgroundColor(Color.parseColor("#dc2626"))
         cancel.visibility = View.VISIBLE
         setState("слушаю")
@@ -266,9 +269,10 @@ class VoiceChatActivity : AppCompatActivity() {
             show("слишком коротко, не отправлено")
             return
         }
+        val stoppedAt = System.currentTimeMillis()
         addLine("вы · ${"%.1f".format(take.seconds)} с")
         setState("отправлено")
-        sendTake(take)
+        sendTake(take, recordStartedAt, stoppedAt)
         renderIdle()
     }
 
@@ -279,7 +283,7 @@ class VoiceChatActivity : AppCompatActivity() {
      * turn into a second remark in the conversation. On refusal the take is not thrown away — it
      * moves into a directory the host may read and waits for the older `record` route.
      */
-    private fun sendTake (take: Recorder.Result) {
+    private fun sendTake (take: Recorder.Result, startedAt: Long, stoppedAt: Long) {
         val base = store.base
         val token = store.token
         if (base == null || token == null) {
@@ -288,7 +292,14 @@ class VoiceChatActivity : AppCompatActivity() {
         }
         val id = VoiceUpload.newId()
         Thread({
-            val outcome = VoiceEvents(base, token).sendVoice(take.file, take.seconds, id)
+            // the three marks travel with the take so the host can measure the whole path: a
+            // delay a person notices spans from the button to the answer, not just the upload
+            val times = VoiceUpload.Times(
+                recordStart = startedAt.takeIf { it > 0 },
+                recordStop = stoppedAt.takeIf { it > 0 },
+                sentAt = System.currentTimeMillis(),
+            )
+            val outcome = VoiceEvents(base, token).sendVoice(take.file, take.seconds, id, times)
             runOnUiThread {
                 when (outcome) {
                     is VoiceUpload.Result.Accepted -> {

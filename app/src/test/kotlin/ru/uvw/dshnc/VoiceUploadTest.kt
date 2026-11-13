@@ -54,6 +54,50 @@ class VoiceUploadTest {
         assertEquals(mapOf("x-seconds" to "12.0"), VoiceUpload.headers(12.0))
     }
 
+
+    @Test
+    fun `all three marks travel as whole milliseconds` () {
+        val headers = VoiceUpload.headers(
+            4.8,
+            VoiceUpload.Times(recordStart = 1_794_593_000_123, recordStop = 1_794_593_005_789, sentAt = 1_794_593_005_812),
+        )
+        assertEquals("1 794 593 000 123".replace(" ", ""), headers["x-record-start"])
+        assertEquals("1794593005789", headers["x-record-stop"])
+        assertEquals("1794593005812", headers["x-sent-at"])
+        assertEquals("4.8", headers["x-seconds"])
+        // digits only: no separators, no exponent, no decimal point
+        for (name in listOf("x-record-start", "x-record-stop", "x-sent-at")) {
+            assertTrue(name, headers.getValue(name).all { it.isDigit() })
+        }
+    }
+
+    @Test
+    fun `an unknown mark is not sent at all, never as zero` () {
+        val onlyStop = VoiceUpload.headers(1.0, VoiceUpload.Times(recordStop = 1_794_593_005_789))
+        assertEquals(setOf("x-seconds", "x-record-stop"), onlyStop.keys)
+        assertFalse(onlyStop.containsKey("x-record-start"))
+        assertFalse(onlyStop.containsKey("x-sent-at"))
+
+        val none = VoiceUpload.headers(2.5)
+        assertEquals(setOf("x-seconds"), none.keys)
+        assertEquals("2.5", none["x-seconds"])
+    }
+
+    @Test
+    fun `a zero mark is the caller's business and would be refused there` () {
+        // the screen passes null for "not known" (a press that never opened the microphone);
+        // this test pins the contract that a value, once given, is sent verbatim
+        val headers = VoiceUpload.headers(0.0, VoiceUpload.Times(recordStart = 0))
+        assertEquals("0", headers["x-record-start"])
+        assertEquals("0.0", headers["x-seconds"])
+    }
+
+    @Test
+    fun `the epoch formatter keeps digits and nothing else` () {
+        assertEquals("1794593000123", VoiceUpload.epoch(1_794_593_000_123))
+        assertEquals("0", VoiceUpload.epoch(0))
+    }
+
     @Test
     fun `an accepted take brings back the host's facts` () {
         val result = VoiceUpload.interpret(

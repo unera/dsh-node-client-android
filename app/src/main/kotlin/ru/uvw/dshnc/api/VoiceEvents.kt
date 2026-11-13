@@ -33,16 +33,22 @@ class VoiceEvents (private val base: String, private val token: String) {
      * @param file the take on this phone.
      * @param seconds how long it lasts, as measured while recording.
      * @param id the press identity: a retry of the same press keeps it.
+     * @param times the client-side marks that let the host measure the whole path, not its half.
      * @returns acceptance with the host's own facts, or the reason it did not land.
      */
-    fun sendVoice (file: File, seconds: Double, id: String): VoiceUpload.Result {
+    fun sendVoice (
+        file: File,
+        seconds: Double,
+        id: String,
+        times: VoiceUpload.Times = VoiceUpload.Times(),
+    ): VoiceUpload.Result {
         if (!file.isFile) return VoiceUpload.Result.Failed("записи ${file.name} нет на телефоне")
         val request = try {
             val body = file.asRequestBody("audio/wav".toMediaType())
             Request.Builder()
                 .url(VoiceUpload.url(base, id))
                 .header("authorization", "Bearer $token")
-                .apply { VoiceUpload.headers(seconds).forEach { (name, value) -> header(name, value) } }
+                .apply { VoiceUpload.headers(seconds, times).forEach { (name, value) -> header(name, value) } }
                 .post(body)
                 .build()
         } catch (error: Throwable) {

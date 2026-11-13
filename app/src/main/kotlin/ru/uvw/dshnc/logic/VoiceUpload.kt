@@ -32,14 +32,39 @@ object VoiceUpload {
         base.trimEnd('/') + "/v1/upload-file?type=" + TYPE + "&filetype=" + FORMAT + "&id=" + encode(id)
 
     /**
+     * When the take happened, in epoch milliseconds, as measured on this phone.
+     *
+     * Three marks, not one: a person notices the delay between pressing the button and hearing an
+     * answer, and only the phone can say when each end of that wait really was. An unknown mark
+     * stays `null` and its header is not sent at all — a zero would read as "1970" downstream.
+     */
+    data class Times (
+        /** The moment the microphone opened. */
+        val recordStart: Long? = null,
+        /** The moment the recorder stopped writing. */
+        val recordStop: Long? = null,
+        /** The moment just before the request went out. */
+        val sentAt: Long? = null,
+    )
+
+    /**
      * The headers besides the token and the length, which the transport sets itself.
      *
      * @param seconds how long the take lasts.
-     * @returns the header values as they go on the wire.
+     * @param times the client-side marks, each optional.
+     * @returns the header values as they go on the wire; unknown marks are absent, not zero.
      */
-    fun headers (seconds: Double): Map<String, String> = mapOf(
-        "x-seconds" to format(seconds),
-    )
+    fun headers (seconds: Double, times: Times = Times()): Map<String, String> {
+        val headers = LinkedHashMap<String, String>()
+        headers["x-seconds"] = format(seconds)
+        times.recordStart?.let { headers["x-record-start"] = epoch(it) }
+        times.recordStop?.let { headers["x-record-stop"] = epoch(it) }
+        times.sentAt?.let { headers["x-sent-at"] = epoch(it) }
+        return headers
+    }
+
+    /** An epoch mark as the wire wants it: whole milliseconds, digits only, no separators. */
+    fun epoch (millis: Long): String = millis.toString()
 
     /** A duration as the wire wants it: one decimal place, never `4,8` and never `NaN`. */
     fun format (seconds: Double): String {
