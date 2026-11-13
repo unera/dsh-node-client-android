@@ -19,6 +19,9 @@ import androidx.core.app.ActivityCompat
 import ru.uvw.dshnc.logic.Recorder
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.api.VoiceEvents
+import ru.uvw.dshnc.logic.VoiceChat
+import ru.uvw.dshnc.logic.VoiceChatBus
+import ru.uvw.dshnc.logic.VoiceChatLog
 import ru.uvw.dshnc.logic.VoiceFiles
 import ru.uvw.dshnc.logic.VoiceOutbox
 import ru.uvw.dshnc.logic.VoiceUpload
@@ -73,6 +76,8 @@ class VoiceChatActivity : AppCompatActivity() {
         mode = VoiceMode.of(store.voiceMode)
         setContentView(build())
         VoiceOutbox.onEvent = { event, recording -> runOnUiThread { onOutbox(event, recording?.seconds) } }
+        VoiceChatBus.onChanged = { runOnUiThread { renderChat() } }
+        renderChat()
         renderMode()
         show("готов")
         tick(0)
@@ -270,9 +275,12 @@ class VoiceChatActivity : AppCompatActivity() {
             return
         }
         val stoppedAt = System.currentTimeMillis()
-        addLine("вы · ${"%.1f".format(take.seconds)} с")
+        val exchange = VoiceUpload.newId()
+        // the take appears at once and carries its exchange id: the transcript that arrives later
+        // replaces this very line instead of standing next to it
+        VoiceChatBus.recording(exchange, "вы · ${"%.1f".format(take.seconds)} с")
         setState("отправлено")
-        sendTake(take, recordStartedAt, stoppedAt)
+        sendTake(take, recordStartedAt, stoppedAt, exchange)
         renderIdle()
     }
 
@@ -283,14 +291,13 @@ class VoiceChatActivity : AppCompatActivity() {
      * turn into a second remark in the conversation. On refusal the take is not thrown away — it
      * moves into a directory the host may read and waits for the older `record` route.
      */
-    private fun sendTake (take: Recorder.Result, startedAt: Long, stoppedAt: Long) {
+    private fun sendTake (take: Recorder.Result, startedAt: Long, stoppedAt: Long, id: String) {
         val base = store.base
         val token = store.token
         if (base == null || token == null) {
             refuse(take, "узел не подключён к хосту")
             return
         }
-        val id = VoiceUpload.newId()
         Thread({
             // the three marks travel with the take so the host can measure the whole path: a
             // delay a person notices spans from the button to the answer, not just the upload
@@ -346,15 +353,48 @@ class VoiceChatActivity : AppCompatActivity() {
         talk.text = if (mode == VoiceMode.TOGGLE && recorder.isRecording) "⏹" else "🎤"
     }
 
-    /** A line in the conversation: the person's take, or later the host's answer. */
-    private fun addLine (text: String) {
-        chat.addView(TextView(this).apply {
-            this.text = text
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            setPadding(0, (4 * resources.displayMetrics.density).toInt(), 0, (4 * resources.displayMetrics.density).toInt())
-        })
+    /**
+     * Draw the whole conversation from the shared log.
+     *
+     * Redrawing everything is cheap at two hundred lines and it removes a whole class of bugs: a
+     * transcript replacing its placeholder, an answer arriving before the screen was opened, and a
+     * rotate in the middle of an exchange all end up in the same code path.
+     */
+    private fun renderChat () {
+        chat.removeAllViews()
+        for (entry in VoiceChatBus.snapshot()) chat.addView(view(entry))
+        if (stateLine.parent == null) chat.addView(stateLine)
         scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** One line: the person flush left, the answer indented, service notes small and grey. */
+    private fun view (entry: VoiceChatLog.Entry): TextView {
+        val density = resources.displayMetrics.density
+        val indent = when (entry.role) {
+            // the answer sits as the other speaker: indented, slightly quieter
+            VoiceChat.Role.ASSISTANT -> (28 * density).toInt()
+            else -> 0
+        }
+        val size = when (entry.role) {
+            VoiceChat.Role.SYSTEM -> 13f
+            else -> 20f
+        }
+        val color = when (entry.role) {
+            VoiceChat.Role.USER -> Color.WHITE
+            VoiceChat.Role.ASSISTANT -> Color.parseColor("#e5e7eb")
+            VoiceChat.Role.SYSTEM -> Color.parseColor("#6b7280")
+        }
+        return TextView(this).apply {
+            text = entry.text
+            textSize = size
+            setTextColor(color)
+            setPadding(indent, (4 * density).toInt(), 0, (4 * density).toInt())
+        }
+    }
+
+    /** A note of the screen's own: small and grey, never mistaken for a remark. */
+    private fun addLine (text: String) {
+        VoiceChatBus.system(text)
     }
 
     private fun show (text: String) {
@@ -392,6 +432,7 @@ class VoiceChatActivity : AppCompatActivity() {
         holding = false
         if (recorder.isRecording) stopRecording()
         VoiceOutbox.onEvent = null
+        VoiceChatBus.onChanged = null
     }
 
     override fun onDestroy () {

@@ -37,7 +37,7 @@ class VoiceApiTest {
         val methods = schema.optJSONArray("methods")
         assertNotNull(methods)
         val names = (0 until methods!!.length()).map { methods.getJSONObject(it).optString("method") }
-        assertEquals(listOf("caps", "say", "stop", "play", "record"), names)
+        assertEquals(listOf("caps", "say", "stop", "chat", "play", "record"), names)
     }
 
     @Test
@@ -133,6 +133,48 @@ class VoiceApiTest {
         val outcome = api.handle("stop", JSONObject(), 11L, 0.0) { }
         assertEquals("ok", outcome.optString("status"))
         assertEquals(false, outcome.optJSONObject("payload")!!.optBoolean("playing"))
+    }
+
+
+    @Test
+    fun chatIsDeclaredWithRoleAndTextRequired () {
+        val methods = api.schema().optJSONArray("methods")!!
+        val chat = (0 until methods.length())
+            .map { methods.getJSONObject(it) }
+            .first { it.optString("method") == "chat" }
+        val args = chat.optJSONObject("args")!!
+        val required = args.optJSONArray("required")!!
+        assertEquals(2, required.length())
+        assertEquals("role", required.optString(0))
+        assertEquals("text", required.optString(1))
+        assertNotNull(args.optJSONObject("properties")!!.optJSONObject("id"))
+    }
+
+    @Test
+    fun chatRefusesAnUnknownRoleAndBlankText () {
+        val badRole = api.handle("chat", JSONObject().put("role", "system").put("text", "привет"), 20L, 0.0) { }
+        assertEquals("bad_args", badRole.optString("code"))
+        val noRole = api.handle("chat", JSONObject().put("text", "привет"), 21L, 0.0) { }
+        assertEquals("bad_args", noRole.optString("code"))
+        val blank = api.handle("chat", JSONObject().put("role", "user").put("text", "   "), 22L, 0.0) { }
+        assertEquals("bad_args", blank.optString("code"))
+    }
+
+    @Test
+    fun chatClippingAndPairingHappenInTheModel () {
+        // the method only clips and stores; the pairing is covered by VoiceChatTest
+        val long = "я".repeat(4100)
+        val outcome = api.handle(
+            "chat",
+            JSONObject().put("role", "user").put("text", long).put("id", "x-1"),
+            23L,
+            0.0,
+        ) { }
+        assertEquals("ok", outcome.optString("status"))
+        assertEquals(true, outcome.optJSONObject("payload")!!.optBoolean("shown"))
+        val stored = ru.uvw.dshnc.logic.VoiceChatBus.snapshot().last { it.id == "x-1" }
+        assertEquals(ru.uvw.dshnc.logic.VoiceChat.MAX_TEXT, stored.text.length)
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
     }
 
     @Test

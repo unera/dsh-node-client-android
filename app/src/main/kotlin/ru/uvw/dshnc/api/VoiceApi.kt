@@ -9,6 +9,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import ru.uvw.dshnc.logic.VoiceChat
+import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.logic.VoiceOutbox
 import java.util.concurrent.ConcurrentHashMap
@@ -77,6 +79,11 @@ class VoiceApi (private val context: Context) {
             .put(method("stop", "Stop speaking right now",
                 JSONObject().put("type", "object").put("properties", JSONObject())))
             .put(method(
+                "chat",
+                "Show one line in the voice conversation: the transcript of the take, or the answer",
+                chatArgs(),
+            ))
+            .put(method(
                 "play",
                 "Download a file from the host by this command's ticket and play it out loud",
                 playArgs(),
@@ -87,6 +94,21 @@ class VoiceApi (private val context: Context) {
                 recordArgs(),
             )))
 
+
+    /** The `chat` arguments: who speaks, what, and which exchange it belongs to. */
+    private fun chatArgs (): JSONObject = JSONObject()
+        .put("type", "object")
+        .put("properties", JSONObject()
+            .put("role", JSONObject()
+                .put("type", "string")
+                .put("description", "user — the transcript of the take; assistant — the answer"))
+            .put("text", JSONObject()
+                .put("type", "string")
+                .put("description", "The line itself; longer than 4000 characters is clipped"))
+            .put("id", JSONObject()
+                .put("type", "string")
+                .put("description", "The exchange id from the upload: it pairs a take with its transcript")))
+        .put("required", JSONArray().put("role").put("text"))
 
     /** The `play` arguments: the file is named by its path on the host. */
     private fun playArgs (): JSONObject = JSONObject()
@@ -138,6 +160,7 @@ class VoiceApi (private val context: Context) {
     ): JSONObject = when (method) {
         "caps" -> caps()
         "say" -> say(args, seq, commandSeconds, submit)
+        "chat" -> chat(args)
         "play" -> play(args, seq, commandSeconds)
         "record" -> record(args, seq, commandSeconds, submit)
         "stop" -> stop()
@@ -292,6 +315,23 @@ class VoiceApi (private val context: Context) {
         val playing = synchronized(playerLock) { player != null }
         if (playing) stopPlayback()
         return ok(JSONObject().put("stopped", true).put("spoken", speaking).put("playing", playing))
+    }
+
+    /**
+     * Put one line into the voice conversation.
+     *
+     * The screen may be closed: the line still lands in the shared log and is drawn when the screen
+     * opens. Nothing here waits for the sound — the answer is usually already on its way to the
+     * player as a separate `play` command.
+     */
+    private fun chat (args: JSONObject): JSONObject {
+        val role = VoiceChat.Role.parse(args.optString("role"))
+            ?: return err("bad_args", "role бывает user или assistant, а не «${args.optString("role")}»")
+        val raw = args.optString("text")
+        if (raw.isBlank()) return err("bad_args", "нужен непустой text")
+        val id = args.optString("id").trim()
+        VoiceChatBus.put(id, role, VoiceChat.clip(raw))
+        return ok(JSONObject().put("shown", true))
     }
 
     /**

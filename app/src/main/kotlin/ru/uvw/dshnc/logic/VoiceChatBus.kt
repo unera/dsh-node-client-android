@@ -1,0 +1,43 @@
+package ru.uvw.dshnc.logic
+
+/**
+ * The one conversation the screen and the command loop share.
+ *
+ * `voice.chat` runs in the node service, the lines are drawn by the activity, and both live in the
+ * same process — but not in the same lifetime: a line may arrive while the screen is closed, and a
+ * screen may open after the answer was already shown once. So the log is the truth, the listener is
+ * only a nudge, and opening the screen redraws from [snapshot].
+ */
+object VoiceChatBus {
+    private val lock = Object()
+    private val log = VoiceChatLog()
+
+    /** Called after any change; the activity hops to the main thread itself. */
+    @Volatile var onChanged: (() -> Unit)? = null
+
+    fun snapshot (): List<VoiceChatLog.Entry> = synchronized(lock) { log.snapshot() }
+
+    /** A take was recorded: a placeholder line for its exchange id. */
+    fun recording (id: String, text: String) {
+        synchronized(lock) { log.recording(id, text) }
+        onChanged?.invoke()
+    }
+
+    /** A line from the host: the transcript of a take, or the answer. */
+    fun put (id: String, role: VoiceChat.Role, text: String) {
+        synchronized(lock) { log.put(id, role, text) }
+        onChanged?.invoke()
+    }
+
+    /** A remark the screen makes about itself. */
+    fun system (text: String, id: String = "") {
+        synchronized(lock) { log.system(text, id) }
+        onChanged?.invoke()
+    }
+
+    /** Forget everything: used by tests and by a node that is re-paired. */
+    fun clear () {
+        synchronized(lock) { log.clear() }
+        onChanged?.invoke()
+    }
+}
