@@ -199,6 +199,22 @@ class NodeService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Every special rule the node binds, in one list.
+     *
+     * The rules belong to the node, not to the API contract, so they are collected here instead
+     * of being spread over the announce call site: the server refuses a duplicate pair loudly
+     * (`applyRules` is validated before anything is written), and one list is easier to keep
+     * free of duplicates than several.
+     */
+    private fun announceRules (): JSONArray {
+        val all = JSONArray()
+        for (rules in listOf(SessionApi.rules(), VoiceApi.rules())) {
+            for (index in 0 until rules.length()) all.put(rules.getJSONObject(index))
+        }
+        return all
+    }
+
     private suspend fun run (base: String) {
         val api = NodeApi(base)
         // what we can do: files inside the allowed directories
@@ -252,7 +268,7 @@ class NodeService : Service() {
                     apis = apis,
                     uptimeSeconds = uptimeSeconds(),
                     workdir = TokenStore(this).roots.firstOrNull(),
-                    applyRules = SessionApi.rules(),
+                    applyRules = announceRules(),
                     epoch = epoch,
                     clientEpoch = clientEpoch,
                 )

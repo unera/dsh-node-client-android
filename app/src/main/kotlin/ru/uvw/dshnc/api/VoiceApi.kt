@@ -394,6 +394,30 @@ class VoiceApi (private val context: Context) {
         .put("status", "error").put("code", code).put("message", message)
 
     companion object {
+        /**
+         * The special rules this API binds (`announce.applyRules`).
+         *
+         * Both `say` and `record` take longer than a command loop tick and both own a device the
+         * person is using right now: a take must not have another command cut in while the
+         * microphone is open, and a sentence must not be interrupted by a command that was queued
+         * for a busy minute. `flushAround` is what asks the server for both barriers.
+         *
+         * `timing` is NOT bound to `record`, although the measurement would be welcome: the
+         * server keeps one rule per `(api, version, method)` and refuses a second one with
+         * `правило для «voice.record» уже задано выше`. The take is measured on the device
+         * anyway — the answer carries its own `seconds`.
+         */
+        fun rules (): JSONArray = JSONArray()
+            .put(JSONObject()
+                .put("api", "voice")
+                .put("method", "record")
+                .put("rule", "flushAround"))
+            .put(JSONObject()
+                .put("api", "voice")
+                .put("method", "say")
+                .put("rule", "flushAround"))
+    
+
         /** The marker the command loop knows: this command answers later, from its own thread. */
         const val PENDING = "pending"
 
