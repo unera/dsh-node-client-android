@@ -37,7 +37,7 @@ class VoiceApiTest {
         val methods = schema.optJSONArray("methods")
         assertNotNull(methods)
         val names = (0 until methods!!.length()).map { methods.getJSONObject(it).optString("method") }
-        assertEquals(listOf("caps", "say", "stop", "record"), names)
+        assertEquals(listOf("caps", "say", "stop", "play", "record"), names)
     }
 
     @Test
@@ -98,6 +98,42 @@ class VoiceApiTest {
         assertEquals("bad_args", outcome.optString("code"))
     }
 
+
+
+    @Test
+    fun playIsDeclaredWithAPathAndNothingElseRequired () {
+        val methods = api.schema().optJSONArray("methods")!!
+        val play = (0 until methods.length())
+            .map { methods.getJSONObject(it) }
+            .first { it.optString("method") == "play" }
+        val args = play.optJSONObject("args")!!
+        val required = args.optJSONArray("required")!!
+        assertEquals(1, required.length())
+        assertEquals("path", required.optString(0))
+        assertNotNull(args.optJSONObject("properties")!!.optJSONObject("seconds"))
+    }
+
+    @Test
+    fun playRefusesAnEmptyPathByCode () {
+        val outcome = api.handle("play", JSONObject().put("path", "  "), 9L, 0.0) { }
+        assertEquals("error", outcome.optString("status"))
+        assertEquals("bad_args", outcome.optString("code"))
+    }
+
+    @Test
+    fun playWithoutALinkToTheServerDoesNotThrow () {
+        // no downloader: the node has not reached the host, so there is nothing to fetch with
+        val outcome = api.handle("play", JSONObject().put("path", "/var/lib/dsh/voice/a.wav"), 10L, 0.0) { }
+        assertEquals("error", outcome.optString("status"))
+        assertEquals("voice_unavailable", outcome.optString("code"))
+    }
+
+    @Test
+    fun stopIsSafeWhenNothingIsPlayingOrSpeaking () {
+        val outcome = api.handle("stop", JSONObject(), 11L, 0.0) { }
+        assertEquals("ok", outcome.optString("status"))
+        assertEquals(false, outcome.optJSONObject("payload")!!.optBoolean("playing"))
+    }
 
     @Test
     fun theVoiceApiBindsNoRulesAtAll () {

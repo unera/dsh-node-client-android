@@ -246,6 +246,11 @@ class NodeService : Service() {
                 // a take is written to the phone and pulled by the host through
                 // `files.copyFromDevice`, so the voice API needs no transfer of its own
                 val transfer = TransferApi(base, token)
+                // `voice.play` is the other direction, and it does need the ticket: the file is
+                // fetched with /v1/download-file?seq=<this command>, so the loop lends the client
+                voice.downloader = { seq, localPath, commandSeconds ->
+                    transfer.download(seq, JSONObject().put("path", localPath), commandSeconds)
+                }
                 // pipes stream a command's output into the request body and back: the same
                 // token, the same allowed directories, the same registry of live processes
                 val pipe = PipeApi(base, token, TokenStore(this).roots, shell.running)
@@ -703,7 +708,7 @@ class NodeService : Service() {
                     submitResult(api, token, seq, answer)
                 }
                 method == "post" && args.has("id") -> notifications.handle(method, args)
-                method == "say" || method == "stop" || method == "caps" || method == "record" -> voice.handle(method, args, seq, commandSeconds) { answer ->
+                method == "say" || method == "stop" || method == "caps" || method == "record" || method == "play" -> voice.handle(method, args, seq, commandSeconds) { answer ->
                     submitResult(api, token, seq, answer)
                 }
                 method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args, commandSeconds)

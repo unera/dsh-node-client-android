@@ -31,10 +31,10 @@ class VoiceUploadTest {
     @Test
     fun `the address carries the kind, the format and the press identity` () {
         val url = VoiceUpload.url("https://dsh.example/", "abc-123")
-        assertEquals("https://dsh.example/v1/upload-file?type=voice&filetype=wav&id=abc-123", url)
+        assertEquals("https://dsh.example/v1/upload-file?type=voice&filetype=wav&id=abc-123&synth=device", url)
         // a base without a slash must not produce a double slash
         assertEquals(
-            "https://dsh.example/v1/upload-file?type=voice&filetype=wav&id=x",
+            "https://dsh.example/v1/upload-file?type=voice&filetype=wav&id=x&synth=device",
             VoiceUpload.url("https://dsh.example", "x"),
         )
     }
@@ -42,7 +42,7 @@ class VoiceUploadTest {
     @Test
     fun `an identity with awkward characters survives the query` () {
         val url = VoiceUpload.url("https://dsh.example", "a b/c")
-        assertTrue(url.endsWith("id=a+b%2Fc"))
+        assertTrue(url.endsWith("id=a+b%2Fc&synth=device"))
         // no seq anywhere: the route is an event, not a command result
         assertFalse(url.contains("seq="))
     }
@@ -96,6 +96,18 @@ class VoiceUploadTest {
     fun `the epoch formatter keeps digits and nothing else` () {
         assertEquals("1794593000123", VoiceUpload.epoch(1_794_593_000_123))
         assertEquals("0", VoiceUpload.epoch(0))
+    }
+
+
+    @Test
+    fun `the synthesis mode always travels, and only two values mean anything` () {
+        assertEquals("device", VoiceUpload.synthOf(null))
+        assertEquals("device", VoiceUpload.synthOf(""))
+        assertEquals("device", VoiceUpload.synthOf("nonsense"))
+        assertEquals("host", VoiceUpload.synthOf("host"))
+        assertEquals("host", VoiceUpload.synthOf(" HOST "))
+        assertTrue(VoiceUpload.url("https://dsh.example", "x", "host").endsWith("&synth=host"))
+        assertTrue(VoiceUpload.url("https://dsh.example", "x").endsWith("&synth=device"))
     }
 
     @Test

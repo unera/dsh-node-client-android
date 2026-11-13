@@ -34,6 +34,7 @@ class VoiceEvents (private val base: String, private val token: String) {
      * @param seconds how long it lasts, as measured while recording.
      * @param id the press identity: a retry of the same press keeps it.
      * @param times the client-side marks that let the host measure the whole path, not its half.
+     * @param synth who voices the answer: the phone's engine or the harness.
      * @returns acceptance with the host's own facts, or the reason it did not land.
      */
     fun sendVoice (
@@ -41,12 +42,13 @@ class VoiceEvents (private val base: String, private val token: String) {
         seconds: Double,
         id: String,
         times: VoiceUpload.Times = VoiceUpload.Times(),
+        synth: String = VoiceUpload.SYNTH_DEVICE,
     ): VoiceUpload.Result {
         if (!file.isFile) return VoiceUpload.Result.Failed("записи ${file.name} нет на телефоне")
         val request = try {
             val body = file.asRequestBody("audio/wav".toMediaType())
             Request.Builder()
-                .url(VoiceUpload.url(base, id))
+                .url(VoiceUpload.url(base, id, synth))
                 .header("authorization", "Bearer $token")
                 .apply { VoiceUpload.headers(seconds, times).forEach { (name, value) -> header(name, value) } }
                 .post(body)

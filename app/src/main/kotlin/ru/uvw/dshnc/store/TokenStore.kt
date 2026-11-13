@@ -92,6 +92,15 @@ class TokenStore(private val context: Context) {
         get() = read("poll")?.toIntOrNull() ?: 0
         set(value) = write("poll", value.toString())
 
+    /**
+     * Where the answer's voice is produced: `device` (the phone's own speech engine) or `host`
+     * (the harness synthesizes it). The choice travels with every take, so the host knows what to
+     * do before it has the file.
+     */
+    var voiceSynth: String
+        get() = read("voiceSynth") ?: "device"
+        set(value) = write("voiceSynth", value)
+
     /** The voice screen's button habit: `ptt` (hold) or `toggle` (press twice). */
     var voiceMode: String
         get() = read("voiceMode") ?: "ptt"

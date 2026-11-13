@@ -66,6 +66,26 @@ class SettingsActivity : AppCompatActivity() {
             }
         })
 
+        // how the answer is voiced: by the phone's own engine, or synthesized on the harness and
+        // streamed back. The choice travels with every take, so the host never has to guess.
+        root.addView(Ui.group(this, "Способ синтеза звука"))
+        val synth = android.widget.RadioGroup(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val synthDevice = android.widget.RadioButton(this).apply {
+            id = android.view.View.generateViewId()
+            text = "TTS на Android"
+            isChecked = store.voiceSynth != "host"
+        }
+        val synthHost = android.widget.RadioButton(this).apply {
+            id = android.view.View.generateViewId()
+            text = "Синтез на DSH"
+            isChecked = store.voiceSynth == "host"
+        }
+        synth.addView(synthDevice)
+        synth.addView(synthHost)
+        root.addView(synth)
+
         val debug = android.widget.CheckBox(this).apply {
             text = "разрешить session.debug_info"
             isChecked = store.debugInfo
@@ -80,6 +100,7 @@ class SettingsActivity : AppCompatActivity() {
                 store.pingFactor = factor.text.toString().toIntOrNull() ?: 10
                 store.pollFallback = poll.text.toString().toIntOrNull() ?: 0
                 store.debugInfo = debug.isChecked
+                store.voiceSynth = if (synthHost.isChecked) "host" else "device"
                 ru.uvw.dshnc.service.NodeService.stop(this@SettingsActivity)
                 ru.uvw.dshnc.service.NodeService.start(this@SettingsActivity)
                 finish()

@@ -28,8 +28,24 @@ object VoiceUpload {
      * @param id the press identity, minted by [newId].
      * @returns the full URL, query included.
      */
-    fun url (base: String, id: String): String =
-        base.trimEnd('/') + "/v1/upload-file?type=" + TYPE + "&filetype=" + FORMAT + "&id=" + encode(id)
+    fun url (base: String, id: String, synth: String = SYNTH_DEVICE): String =
+        base.trimEnd('/') + "/v1/upload-file?type=" + TYPE +
+            "&filetype=" + FORMAT +
+            "&id=" + encode(id) +
+            "&synth=" + synthOf(synth)
+
+    /** The two ways an answer can be voiced: by the phone's engine, or by the harness. */
+    const val SYNTH_DEVICE = "device"
+    const val SYNTH_HOST = "host"
+
+    /**
+     * The synthesis mode as the wire takes it.
+     *
+     * It is always sent, never left out: the host must not have to guess, and an old node that
+     * sends nothing means "the phone speaks" — that is the default this client has always had.
+     */
+    fun synthOf (value: String?): String =
+        if (value?.trim()?.lowercase() == SYNTH_HOST) SYNTH_HOST else SYNTH_DEVICE
 
     /**
      * When the take happened, in epoch milliseconds, as measured on this phone.

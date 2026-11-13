@@ -2,10 +2,12 @@ package ru.uvw.dshnc.api
 
 import android.content.Context
 import android.os.Bundle
+import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.Locale
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.logic.VoiceOutbox
@@ -43,6 +45,20 @@ class VoiceApi (private val context: Context) {
     /** Commands waiting for a take right now: a cancel finds them by number. */
     private val recording = ConcurrentHashMap.newKeySet<Long>()
 
+    /** The take or replique being played: one at a time, the newest wins. */
+    private val playerLock = Any()
+    private var player: MediaPlayer? = null
+    private var playingFile: File? = null
+
+    /**
+     * Where a file for `play` comes from.
+     *
+     * The command's own number is the ticket: `/v1/download-file?seq=…` accepts a node's request
+     * only inside a command the server issued, so the transfer client is lent in by the loop that
+     * owns the token, exactly as the old upload branch did.
+     */
+    @Volatile var downloader: ((seq: Long, localPath: String, commandSeconds: Double) -> JSONObject)? = null
+
     fun schema (): JSONObject = JSONObject()
         .put("name", "voice")
         .put("version", NodeApi.VERSION)
@@ -61,11 +77,28 @@ class VoiceApi (private val context: Context) {
             .put(method("stop", "Stop speaking right now",
                 JSONObject().put("type", "object").put("properties", JSONObject())))
             .put(method(
+                "play",
+                "Download a file from the host by this command's ticket and play it out loud",
+                playArgs(),
+            ))
+            .put(method(
                 "record",
                 "Take one recording from the microphone and report where the file landed on this device",
                 recordArgs(),
             )))
 
+
+    /** The `play` arguments: the file is named by its path on the host. */
+    private fun playArgs (): JSONObject = JSONObject()
+        .put("type", "object")
+        .put("properties", JSONObject()
+            .put("path", JSONObject()
+                .put("type", "string")
+                .put("description", "The file on the server: a voice note or any audio the host keeps"))
+            .put("seconds", JSONObject()
+                .put("type", "number")
+                .put("description", "How long it lasts, when the host already knows")))
+        .put("required", JSONArray().put("path"))
 
     /**
      * The `record` arguments.
@@ -105,6 +138,7 @@ class VoiceApi (private val context: Context) {
     ): JSONObject = when (method) {
         "caps" -> caps()
         "say" -> say(args, seq, commandSeconds, submit)
+        "play" -> play(args, seq, commandSeconds)
         "record" -> record(args, seq, commandSeconds, submit)
         "stop" -> stop()
         else -> err("unknown_method", "no such method: $method")
@@ -250,14 +284,76 @@ class VoiceApi (private val context: Context) {
         runCatching { submit(answer) }
     }
 
-    /** Silence the engine now. */
+    /** Silence everything that is speaking: the engine and a played replique alike. */
     private fun stop (): JSONObject {
         val engine = tts
-        if (engine == null || state != State.READY) {
-            return ok(JSONObject().put("stopped", true).put("spoken", false))
+        val speaking = engine != null && state == State.READY
+        if (speaking) runCatching { engine?.stop() }
+        val playing = synchronized(playerLock) { player != null }
+        if (playing) stopPlayback()
+        return ok(JSONObject().put("stopped", true).put("spoken", speaking).put("playing", playing))
+    }
+
+    /**
+     * Pull one file from the host and start playing it.
+     *
+     * The answer comes as soon as the sound starts, not when it ends: the host waits for a receipt
+     * to know the phone is speaking, and a two-minute replique would hold the command open. The
+     * duration the player reports is what the host uses to plan the next step.
+     *
+     * A second `play` supersedes the first, and a failure to fetch or decode is a plain refusal —
+     * the node keeps working either way.
+     */
+    private fun play (args: JSONObject, seq: Long, commandSeconds: Double): JSONObject {
+        val hostPath = args.optString("path").trim()
+        if (hostPath.isEmpty()) return err("bad_args", "нужен непустой path: что играть")
+        val download = downloader ?: return err(
+            "voice_unavailable",
+            "узел не подключился к серверу: файл неоткуда взять",
+        )
+        val target = File(context.cacheDir, "play-$seq.wav")
+        val fetched = try {
+            download(seq, target.absolutePath, commandSeconds)
+        } catch (error: Throwable) {
+            runCatching { target.delete() }
+            return err("voice_failed", "файл не скачался: ${error.message ?: error.javaClass.simpleName}")
         }
-        runCatching { engine.stop() }
-        return ok(JSONObject().put("stopped", true).put("spoken", true))
+        if (fetched.optString("status") != "ok") {
+            runCatching { target.delete() }
+            return fetched
+        }
+        stopPlayback()
+        val player = MediaPlayer()
+        return try {
+            player.setDataSource(target.absolutePath)
+            player.prepare()
+            val seconds = player.duration / 1000.0
+            player.setOnCompletionListener { stopPlayback() }
+            player.start()
+            synchronized(playerLock) {
+                this.player = player
+                playingFile = target
+            }
+            ok(JSONObject()
+                .put("playing", true)
+                .put("seconds", seconds)
+                .put("path", hostPath))
+        } catch (error: Throwable) {
+            runCatching { player.release() }
+            runCatching { target.delete() }
+            err("voice_failed", "не удалось воспроизвести: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    /** Stop whatever is playing and drop its file: a played replique is not kept. */
+    private fun stopPlayback () {
+        synchronized(playerLock) {
+            runCatching { player?.stop() }
+            runCatching { player?.release() }
+            player = null
+            playingFile?.let { file -> runCatching { file.delete() } }
+            playingFile = null
+        }
     }
 
     /**
@@ -317,6 +413,7 @@ class VoiceApi (private val context: Context) {
 
     /** Release the engine: a service that is going away must not leave a speaker busy. */
     fun shutdown () {
+        stopPlayback()
         synchronized(lock) {
             runCatching { tts?.stop() }
             runCatching { tts?.shutdown() }

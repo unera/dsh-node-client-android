@@ -299,7 +299,8 @@ class VoiceChatActivity : AppCompatActivity() {
                 recordStop = stoppedAt.takeIf { it > 0 },
                 sentAt = System.currentTimeMillis(),
             )
-            val outcome = VoiceEvents(base, token).sendVoice(take.file, take.seconds, id, times)
+            val outcome = VoiceEvents(base, token)
+                .sendVoice(take.file, take.seconds, id, times, store.voiceSynth)
             runOnUiThread {
                 when (outcome) {
                     is VoiceUpload.Result.Accepted -> {
