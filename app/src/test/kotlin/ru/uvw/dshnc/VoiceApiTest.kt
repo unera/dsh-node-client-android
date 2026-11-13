@@ -100,50 +100,10 @@ class VoiceApiTest {
 
 
     @Test
-    fun theBoundRulesNameTheTwoLongCommandsAndNothingElse () {
-        val rules = VoiceApi.rules()
-        assertEquals(2, rules.length())
-        val described = (0 until rules.length()).map { index ->
-            val rule = rules.getJSONObject(index)
-            Triple(rule.optString("api"), rule.optString("method"), rule.optString("rule"))
-        }
-        assertEquals(
-            listOf(
-                Triple("voice", "record", "flushAround"),
-                Triple("voice", "say", "flushAround"),
-            ),
-            described,
-        )
-    }
-
-    @Test
-    fun theServerWouldAcceptTheseRules () {
-        // the same checks the server makes before it writes anything: known rule names, declared
-        // methods, and no second rule for one (api, version, method) pair
-        val known = setOf("timing", "flushBefore", "flushAfter", "flushAround")
-        val methods = api.schema().optJSONArray("methods")!!
-        val declared = (0 until methods.length()).map { methods.getJSONObject(it).optString("method") }
-        val seen = mutableSetOf<String>()
-        val rules = VoiceApi.rules()
-        for (index in 0 until rules.length()) {
-            val rule = rules.getJSONObject(index)
-            assertEquals("voice", rule.optString("api"))
-            assertTrue(rule.optString("rule") in known)
-            assertTrue("method ${rule.optString("method")} must be declared", rule.optString("method") in declared)
-            val key = rule.optString("method")
-            assertTrue("a second rule for $key would be refused", seen.add(key))
-        }
-    }
-
-    @Test
-    fun aSecondRuleForTheSamePairIsTheOneWeDoNotBind () {
-        // documented in VoiceApi.rules(): timing on record would be refused by the server, so the
-        // duration of a take is measured on the device instead
-        val rules = VoiceApi.rules()
-        val timing = (0 until rules.length())
-            .map { rules.getJSONObject(it) }
-            .count { it.optString("rule") == "timing" }
-        assertEquals(0, timing)
+    fun theVoiceApiBindsNoRulesAtAll () {
+        // flushAround here was a mistake with a measured cost: the barrier runs only on an empty
+        // pool, and a take lasts up to 45 s of human time, so every later command queued behind it
+        assertEquals(0, VoiceApi.rules().length())
     }
 
     @Test

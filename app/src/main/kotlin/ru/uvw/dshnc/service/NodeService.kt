@@ -202,18 +202,12 @@ class NodeService : Service() {
     /**
      * Every special rule the node binds, in one list.
      *
-     * The rules belong to the node, not to the API contract, so they are collected here instead
-     * of being spread over the announce call site: the server refuses a duplicate pair loudly
-     * (`applyRules` is validated before anything is written), and one list is easier to keep
-     * free of duplicates than several.
+     * Today that is exactly one binding — `session.ping` — and the voice API deliberately binds
+     * nothing: `flushAround` on a command that waits for a person made every later command queue
+     * behind it. The list stays a single place so that the next binding is added here with its
+     * reason, and not at the call site.
      */
-    private fun announceRules (): JSONArray {
-        val all = JSONArray()
-        for (rules in listOf(SessionApi.rules(), VoiceApi.rules())) {
-            for (index in 0 until rules.length()) all.put(rules.getJSONObject(index))
-        }
-        return all
-    }
+    private fun announceRules (): JSONArray = SessionApi.rules()
 
     private suspend fun run (base: String) {
         val api = NodeApi(base)
