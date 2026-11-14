@@ -13,6 +13,7 @@ import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
 import ru.uvw.dshnc.logic.VoiceInbox
+import ru.uvw.dshnc.logic.VoiceReplay
 import ru.uvw.dshnc.logic.VoiceSpeaker
 import ru.uvw.dshnc.store.TokenStore
 import ru.uvw.dshnc.logic.VoiceMode
@@ -76,7 +77,7 @@ class VoiceApi (private val context: Context) {
         speakText = { text -> speakBlocking(text) },
         playAudio = { audio, seq -> playBlocking(audio, seq) },
         log = { kind, detail -> TokenStore(context).addEvent(kind, detail) },
-        playLocal = { path -> playFileBlocking(path) },
+        playLocal = { path, keep -> playFileBlocking(path, deleteAfter = !keep) },
     )
 
     fun schema (): JSONObject = JSONObject()
@@ -430,6 +431,7 @@ class VoiceApi (private val context: Context) {
         VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text, who, speak.takeIf { it.isNotBlank() }))
         if (say || audio != null) {
             speaker.submit(VoiceSpeaker.Task(id = id, text = spokenText, audio = audio, seq = seq))
+            if (audio == null) VoiceReplay.rememberSpeech(spokenText)
         }
         events.addEvent(
             "chat " + if (role == VoiceChat.Role.USER) "user" else "assistant",
@@ -442,6 +444,34 @@ class VoiceApi (private val context: Context) {
             },
         )
         return queued()
+    }
+
+    /**
+     * What «повтори» would say right now, or null when there is nothing left to say.
+     *
+     * Kept separate from the queueing itself so that the choice — a file or a sentence — is
+     * testable without a device that plays sound.
+     */
+    fun replayTask (): VoiceSpeaker.Task? {
+        val last = VoiceReplay.snapshot() ?: return null
+        val file = last.file
+        if (file != null && file.isFile) {
+            return VoiceSpeaker.Task(id = "replay", text = "", localFile = file.absolutePath, keepFile = true)
+        }
+        val speak = last.speak ?: return null
+        return VoiceSpeaker.Task(id = "replay", text = speak)
+    }
+
+    /**
+     * Say the last answer again, locally.
+     *
+     * Nothing goes to the host: the sentence or the file is already here. It joins the same speech
+     * queue as everything else, so a second tap waits its turn instead of starting a second player.
+     */
+    fun replay (): JSONObject {
+        val task = replayTask() ?: return err("nothing_to_replay", "нечего повторять")
+        speaker.submit(task)
+        return ok(JSONObject().put("queued", true))
     }
 
     /**
@@ -480,6 +510,8 @@ class VoiceApi (private val context: Context) {
         }
         val who = whoOf(args)
         VoiceInbox.post(VoiceInbox.Item.Chat(id, VoiceChat.Role.ASSISTANT, text.ifBlank { speak.orEmpty() }, who, speak))
+        // the last answer stays available for «повтори»: the file replaces the previous one
+        VoiceReplay.rememberFile(target, context.cacheDir)
         speaker.submit(VoiceSpeaker.Task(
             id = id,
             text = speak ?: text,
@@ -511,7 +543,7 @@ class VoiceApi (private val context: Context) {
      * The answer is downloaded before it is queued, so this is the ordinary path for a synthesized
      * voice: play to the end, delete, and let the next sentence start.
      */
-    private fun playFileBlocking (path: String) {
+    private fun playFileBlocking (path: String, deleteAfter: Boolean = true) {
         val file = File(path)
         val player = MediaPlayer()
         val done = CountDownLatch(1)
@@ -526,7 +558,8 @@ class VoiceApi (private val context: Context) {
         } finally {
             runCatching { player.stop() }
             runCatching { player.release() }
-            runCatching { file.delete() }
+            // the kept answer is not deleted: it is what «повтори» plays
+            if (deleteAfter) runCatching { file.delete() }
         }
     }
 

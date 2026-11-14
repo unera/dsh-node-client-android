@@ -90,7 +90,10 @@ class NodeService : Service() {
     /** The `dialog.ask` dispatcher: its state lives in `DialogHub`, this is only the door. */
     private val dialog by lazy { DialogApi(this) }
     /** Speech out loud: the engine is created on the first request, not at boot. */
-    private val voice by lazy { VoiceApi(this) }
+    private val voice by lazy {
+        VoiceApi(this).also { voiceApi = it }
+    }
+
     /** The server generation we know; null — we know none and the next announce says so. */
     @Volatile private var epoch: Long? = null
     /** The persistent connection counter, bumped by every announce. */
@@ -909,6 +912,14 @@ class NodeService : Service() {
     }
 
     companion object {
+        /**
+         * The voice API of the running node, for the screen.
+         *
+         * «Повтори» plays a phrase that is already on the phone: the screen asks this instance
+         * instead of opening a second engine, so one voice queue serves the whole process.
+         */
+        @Volatile var voiceApi: VoiceApi? = null
+
         /** How many commands were executed: shown on the screen. */
         val executed = java.util.concurrent.atomic.AtomicLong()
 

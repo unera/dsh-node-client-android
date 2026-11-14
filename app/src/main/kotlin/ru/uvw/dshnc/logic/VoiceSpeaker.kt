@@ -17,7 +17,7 @@ class VoiceSpeaker (
     private val playAudio: (audio: String, seq: Long) -> Unit,
     private val log: (String, String) -> Unit = { _, _ -> },
     /** A file already on the phone: `voice.answer` downloads it before queueing the speech. */
-    private val playLocal: (path: String) -> Unit = {},
+    private val playLocal: (path: String, keep: Boolean) -> Unit = { _, _ -> },
 ) {
     /** One thing to say: a text through the engine, a file on the phone, or a file from the host. */
     data class Task (
@@ -27,6 +27,8 @@ class VoiceSpeaker (
         val seq: Long = 0L,
         /** A local path, when the take or the answer is already downloaded. */
         val localFile: String? = null,
+        /** Keep the file after playing: the last answer is replayed from it. */
+        val keepFile: Boolean = false,
     )
 
     private val queue = LinkedBlockingQueue<Task>()
@@ -57,7 +59,7 @@ class VoiceSpeaker (
             try {
                 log("speech start", if (task.audio != null) "audio ${task.audio}" else "text ${task.text.length} симв")
                 when {
-                    task.localFile != null -> playLocal(task.localFile)
+                    task.localFile != null -> playLocal(task.localFile, task.keepFile)
                     task.audio != null -> playAudio(task.audio, task.seq)
                     else -> speakText(task.text)
                 }

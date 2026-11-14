@@ -1288,3 +1288,98 @@ class VoiceSynthChoiceTest {
         assertTrue(ru.uvw.dshnc.logic.VoiceUpload.url("https://dsh.example", "id-1", store.voiceSynth).endsWith("&synth=device"))
     }
 }
+
+/**
+ * «Повтори»: the last answer can be heard again without asking the host.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceReplayTest {
+    private fun app(): android.content.Context = org.robolectric.RuntimeEnvironment.getApplication()
+
+    @Test
+    fun `a file replaces the previous one, and only the last stays`() {
+        ru.uvw.dshnc.logic.VoiceReplay.clear()
+        val cache = app().cacheDir
+        val first = java.io.File(cache, "answer-a.ogg").apply { writeBytes(ByteArray(16) { 1 }) }
+        val second = java.io.File(cache, "answer-b.ogg").apply { writeBytes(ByteArray(32) { 2 }) }
+        val keptFirst = ru.uvw.dshnc.logic.VoiceReplay.rememberFile(first, cache)
+        assertNotNull(keptFirst)
+        assertTrue(keptFirst!!.isFile)
+        val keptSecond = ru.uvw.dshnc.logic.VoiceReplay.rememberFile(second, cache)
+        assertNotNull(keptSecond)
+        // one file, one name: the new answer took the place of the old one
+        assertEquals(ru.uvw.dshnc.logic.VoiceReplay.FILE_NAME, keptSecond!!.name)
+        assertTrue(keptSecond.isFile)
+        assertEquals(32L, keptSecond.length())
+        assertEquals(keptSecond.absolutePath, ru.uvw.dshnc.logic.VoiceReplay.snapshot()?.file?.absolutePath)
+        ru.uvw.dshnc.logic.VoiceReplay.clear()
+    }
+
+    @Test
+    fun `a spoken sentence is remembered without a file`() {
+        ru.uvw.dshnc.logic.VoiceReplay.clear()
+        ru.uvw.dshnc.logic.VoiceReplay.rememberSpeech("Свет включил.")
+        val last = ru.uvw.dshnc.logic.VoiceReplay.snapshot()
+        assertEquals("Свет включил.", last?.speak)
+        assertEquals(null, last?.file)
+        // an empty sentence is not worth remembering
+        ru.uvw.dshnc.logic.VoiceReplay.rememberSpeech("   ")
+        assertEquals("Свет включил.", ru.uvw.dshnc.logic.VoiceReplay.snapshot()?.speak)
+        ru.uvw.dshnc.logic.VoiceReplay.clear()
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceReplay.snapshot())
+    }
+
+    @Test
+    fun `a tap queues the sentence, or the kept file, and never both`() {
+        val api = ru.uvw.dshnc.api.VoiceApi(app())
+        ru.uvw.dshnc.logic.VoiceReplay.clear()
+        try {
+            assertEquals(null, api.replayTask())
+
+            ru.uvw.dshnc.logic.VoiceReplay.rememberSpeech("Половина шестого.")
+            val spoken = api.replayTask()
+            assertEquals("Половина шестого.", spoken?.text)
+            assertEquals(null, spoken?.localFile)
+
+            val cache = app().cacheDir
+            val file = java.io.File(cache, "answer-c.ogg").apply { writeBytes(ByteArray(8)) }
+            ru.uvw.dshnc.logic.VoiceReplay.rememberFile(file, cache)
+            val played = api.replayTask()
+            assertNotNull(played?.localFile)
+            // the kept file must survive its own playback
+            assertEquals(true, played?.keepFile)
+        } finally {
+            ru.uvw.dshnc.api.VoiceApi(app()).shutdown()
+            ru.uvw.dshnc.logic.VoiceReplay.clear()
+        }
+    }
+
+    @Test
+    fun `the button sits on the newest answer only`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "r-1", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "первый ответ",
+                ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦜"),
+            )
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "r-1", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "второй ответ",
+                ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦜"),
+            )
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet("r-1", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "мой вопрос")
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            var buttons = 0
+            fun walk (view: android.view.View) {
+                if (view is android.widget.TextView && view.contentDescription?.toString() == "повторить последнюю фразу") buttons += 1
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            assertEquals("кнопка должна быть только у последнего ответа", 1, buttons)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+}

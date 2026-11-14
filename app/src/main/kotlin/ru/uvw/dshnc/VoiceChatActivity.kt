@@ -85,6 +85,8 @@ class VoiceChatActivity : AppCompatActivity() {
     private lateinit var title: TextView
     /** Who answers, as the host last said: the header uses it once there is a line to introduce. */
     private var assistantWho: VoiceChat.Whom? = null
+    /** The node's voice API, when the screen runs inside a host that has one. */
+    private var voice: ru.uvw.dshnc.api.VoiceApi? = null
     /** The menu, while it is open: dismissed from the rows themselves. */
     private var popup: android.widget.PopupWindow? = null
     /** The screen's own small decisions: the hint and the mode, testable without a device. */
@@ -117,6 +119,8 @@ class VoiceChatActivity : AppCompatActivity() {
         // a take lives in the cache: the ordinary path uploads it and deletes it at once, so
         // nothing of ours should accumulate in the person's shared storage
         recorder = Recorder(cacheDir)
+        // the running node owns the one speech queue; «повтори» goes through it
+        voice = ru.uvw.dshnc.service.NodeService.voiceApi
         ui = VoiceChatUi(VoiceMode.of(store.voiceMode))
         mode = ui.mode
         setContentView(build())
@@ -428,6 +432,8 @@ class VoiceChatActivity : AppCompatActivity() {
                     is VoiceSession.Result.Accepted -> {
                         VoiceInbox.clear()
                         VoiceChatBus.clear()
+                        // the phrase belonged to the old conversation: drop it with the history
+                        ru.uvw.dshnc.logic.VoiceReplay.clear()
                         hideProgress()
                         addLine("новая сессия")
                     }
@@ -699,8 +705,9 @@ class VoiceChatActivity : AppCompatActivity() {
         var previousId: String? = null
         val entries = VoiceChatBus.snapshot()
         val tails = VoiceBubble.tails(entries)
+        val lastAnswer = entries.indexOfLast { it.role == VoiceChat.Role.ASSISTANT }
         entries.forEachIndexed { index, entry ->
-            chat.addView(view(entry, previousId, tails[index]))
+            chat.addView(view(entry, previousId, tails[index], lastAnswer == index))
             previousId = entry.id
         }
         if (progressLine.visibility == View.VISIBLE) {
@@ -715,7 +722,7 @@ class VoiceChatActivity : AppCompatActivity() {
      * One line of the conversation: a blue bubble on the right for the person, a dark one on the
      * left for the answer, and nothing but small grey text for the screen's own notes.
      */
-    private fun view (entry: VoiceChatLog.Entry, previousId: String?, tail: Boolean): View {
+    private fun view (entry: VoiceChatLog.Entry, previousId: String?, tail: Boolean, lastAnswer: Boolean = false): View {
         val density = resources.displayMetrics.density
         val bubbleMaxWidth = VoiceBubble.maxWidthPx(resources.displayMetrics.widthPixels)
         val row = LinearLayout(this).apply {
@@ -761,9 +768,16 @@ class VoiceChatActivity : AppCompatActivity() {
         }
 
         // the name of the speaker inside the bubble, top-left, like a messenger's green name; the
-        // emoji is in the avatar, so repeating it here would be noise
+        // emoji is in the avatar, so repeating it here would be noise. Next to it — «повтори», and
+        // only on the newest answer: repeating an old one is never what the person means.
         if (entry.role == VoiceChat.Role.ASSISTANT) {
-            entry.who?.takeIf { it.name.isNotBlank() }?.let { who -> bubble.addView(nameInside(who)) }
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            entry.who?.takeIf { it.name.isNotBlank() }?.let { who -> header.addView(nameInside(who)) }
+            if (lastAnswer) header.addView(replayButton())
+            if (header.childCount > 0) bubble.addView(header)
         }
         val size = if (entry.role == VoiceChat.Role.SYSTEM) 13f else 18f
         val color = Color.parseColor(VoiceBubble.textColor(entry.role))
@@ -870,6 +884,36 @@ class VoiceChatActivity : AppCompatActivity() {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.parseColor("#1f2937"))
+            }
+        }
+    }
+
+    /**
+     * «Повтори»: a small speaker next to the name of the newest answer.
+     *
+     * The tap area is larger than the icon: 40 dp is the smallest thing a thumb finds without
+     * looking, and this button is pressed in a car.
+     */
+    private fun replayButton (): TextView {
+        val density = resources.displayMetrics.density
+        return TextView(this).apply {
+            text = "🔊"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            contentDescription = "повторить последнюю фразу"
+            setTextColor(Color.parseColor("#9ca3af"))
+            layoutParams = LinearLayout.LayoutParams(
+                (40 * density).toInt(),
+                (40 * density).toInt(),
+            ).apply { setMargins((6 * density).toInt(), 0, 0, 0) }
+            isClickable = true
+            setOnClickListener {
+                // nothing goes to the host: the phrase is already here, and the queue decides
+                // whether it waits for the current sentence to finish
+                val outcome = voice?.replay()
+                if (outcome == null || outcome.optString("status") != "ok") {
+                    show("нечего повторять")
+                }
             }
         }
     }
