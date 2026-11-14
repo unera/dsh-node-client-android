@@ -92,4 +92,6 @@
     <string name="voice_chat_title">Голосовой чат</string>
     <string name="voice_hold">держать</string>
     <string name="voice_toggle">переключение</string>
+    <string name="menu_poll_hint">Запасной опрос, с (0 — выключен)</string>
+    <string name="menu_debug_info">Разрешить session.debug_info</string>
 </resources>

@@ -722,7 +722,8 @@ class VoiceAnswerMenuTest {
             ru.uvw.dshnc.logic.VoiceMode.PTT,
             ru.uvw.dshnc.logic.AnswerMode.LONG,
         )
-        assertEquals(7, items.size)
+        // three groups: the new conversation, the forms, the synthesis
+        assertEquals(10, items.size)
         assertEquals("new-session", items[0].id)
         assertEquals("mode-hold", items[1].id)
         assertEquals("mode-tap", items[2].id)
@@ -730,10 +731,13 @@ class VoiceAnswerMenuTest {
         assertEquals("Показывать ответы", items[3].title)
         assertEquals(
             listOf("Только короткую форму", "Только длинную форму", "Всё, с чертой между ними"),
-            items.drop(4).map { it.title },
+            items.drop(4).take(3).map { it.title },
         )
         // the habit is marked as well: «держать» is the default
-        assertEquals(listOf(false, true, false, false, false, true, false), items.map { it.checked })
+        assertEquals(
+            listOf(false, true, false, false, false, true, false, false, true, false),
+            items.map { it.checked },
+        )
     }
 
     @Test
@@ -742,7 +746,10 @@ class VoiceAnswerMenuTest {
             ru.uvw.dshnc.logic.VoiceMode.PTT,
             ru.uvw.dshnc.logic.AnswerMode.SHORT,
         )
-        assertEquals(listOf(false, true, false, false, true, false, false), items.map { it.checked })
+        assertEquals(
+            listOf(false, true, false, false, true, false, false, false, true, false),
+            items.map { it.checked },
+        )
         assertEquals(
             ru.uvw.dshnc.logic.AnswerMode.BOTH,
             ru.uvw.dshnc.logic.VoiceMenu.answerModeOf("answer-both"),
@@ -1172,5 +1179,112 @@ class VoiceAnswerCommandTest {
         } finally {
             api.shutdown()
         }
+    }
+}
+
+/**
+ * The node's settings live in the sections that are actually reachable, and nowhere else.
+ */
+@RunWith(RobolectricTestRunner::class)
+class SettingsReachabilityTest {
+    private fun open (key: String): SectionActivity {
+        val intent = android.content.Intent(
+            org.robolectric.RuntimeEnvironment.getApplication(),
+            SectionActivity::class.java,
+        ).putExtra("section", key)
+        return org.robolectric.Robolectric.buildActivity(SectionActivity::class.java, intent).setup().get()
+    }
+
+    private fun texts (screen: android.app.Activity): List<String> {
+        val found = mutableListOf<String>()
+        fun walk (view: android.view.View) {
+            if (view is android.widget.TextView) found.add(view.text?.toString().orEmpty())
+            if (view is android.widget.Button) found.add(view.text?.toString().orEmpty())
+            if (view is android.widget.CheckBox) found.add(view.text?.toString().orEmpty())
+            if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+        }
+        walk(screen.findViewById(android.R.id.content))
+        return found
+    }
+
+    @Test
+    fun `the network section keeps ping, stretch and the fallback poll`() {
+        val screen = open("net")
+        try {
+            val texts = texts(screen)
+            // the labels come from the resources, which are in English on this screen
+            assertTrue(texts.any { it.contains("Ping interval", ignoreCase = true) })
+            assertTrue(texts.any { it.contains("Stretch when idle", ignoreCase = true) })
+            assertTrue("резервный опрос должен быть здесь", texts.any { it.contains("Запасной опрос", ignoreCase = true) })
+            assertTrue(texts.any { it.contains("Save", ignoreCase = true) })
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `the android section carries the debug switch`() {
+        val screen = open("android")
+        try {
+            val found = texts(screen)
+            assertTrue("debug-переключателя нет; на экране: $found", found.any { it.contains("debug_info", ignoreCase = true) })
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `the dead screen is gone from the manifest`() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml")
+        val file = if (manifest.exists()) manifest else java.io.File("app/src/main/AndroidManifest.xml")
+        val text = file.readText()
+        assertTrue("SettingsActivity не должна упоминаться в манифесте", !text.contains("SettingsActivity"))
+    }
+}
+
+/**
+ * The synthesis choice moved into the voice menu, and it takes effect with the very next take.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceSynthChoiceTest {
+    private fun app(): android.content.Context = org.robolectric.RuntimeEnvironment.getApplication()
+
+    @Test
+    fun `the menu offers both ways and marks the current one`() {
+        val items = ru.uvw.dshnc.logic.VoiceMenu.items(
+            ru.uvw.dshnc.logic.VoiceMode.PTT,
+            ru.uvw.dshnc.logic.AnswerMode.LONG,
+            "host",
+        )
+        val group = items.dropWhile { !(it.separator && it.title == "Способ синтеза звука") }
+        assertEquals(listOf("TTS на Android", "Синтез на DSH"), group.drop(1).map { it.title })
+        assertEquals(listOf(false, true), group.drop(1).map { it.checked })
+
+        val device = ru.uvw.dshnc.logic.VoiceMenu.items(
+            ru.uvw.dshnc.logic.VoiceMode.PTT,
+            ru.uvw.dshnc.logic.AnswerMode.LONG,
+            "device",
+        ).takeLast(2)
+        assertEquals(listOf(true, false), device.map { it.checked })
+    }
+
+    @Test
+    fun `a row names the synthesis it selects`() {
+        assertEquals("device", ru.uvw.dshnc.logic.VoiceMenu.synthOf("synth-device"))
+        assertEquals("host", ru.uvw.dshnc.logic.VoiceMenu.synthOf("synth-host"))
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceMenu.synthOf("mode-hold"))
+    }
+
+    @Test
+    fun `the choice is stored at once and travels with the next take`() {
+        val store = ru.uvw.dshnc.store.TokenStore(app())
+        store.voiceSynth = "host"
+        // the very next upload carries it: no restart of the node is involved
+        val url = ru.uvw.dshnc.logic.VoiceUpload.url("https://dsh.example", "id-1", store.voiceSynth)
+        assertTrue(url.endsWith("&synth=host"))
+        // and the value survives a new store instance
+        assertEquals("host", ru.uvw.dshnc.store.TokenStore(app()).voiceSynth)
+        store.voiceSynth = "device"
+        assertTrue(ru.uvw.dshnc.logic.VoiceUpload.url("https://dsh.example", "id-1", store.voiceSynth).endsWith("&synth=device"))
     }
 }

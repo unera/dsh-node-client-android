@@ -320,7 +320,7 @@ class VoiceChatActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#1f2937"))
             setPadding(0, (8 * density).toInt(), 0, (8 * density).toInt())
         }
-        for (item in VoiceMenu.items(mode, AnswerMode.of(store.answerMode))) {
+        for (item in VoiceMenu.items(mode, AnswerMode.of(store.answerMode), store.voiceSynth)) {
             if (item.separator) {
                 rows.addView(TextView(this).apply {
                     text = item.title
@@ -391,6 +391,12 @@ class VoiceChatActivity : AppCompatActivity() {
     private fun onMenuItem (id: String) {
         VoiceMenu.modeOf(id)?.let { next ->
             selectMode(next)
+            return
+        }
+        VoiceMenu.synthOf(id)?.let { value ->
+            // it goes on the wire with every take, so no restart is needed
+            store.voiceSynth = value
+            store.addEvent("synth", value)
             return
         }
         VoiceMenu.answerModeOf(id)?.let { next ->

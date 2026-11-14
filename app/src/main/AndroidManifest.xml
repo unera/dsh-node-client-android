@@ -52,7 +52,6 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".MenuActivity" android:exported="false" />
         <activity android:name=".SectionActivity" android:exported="false" />
         <activity android:name=".VoiceChatActivity" android:exported="false" />

@@ -30,6 +30,8 @@ object VoiceMenu {
     const val SEPARATOR = "separator"
 
     const val ANSWER_SHORT = "answer-short"
+    const val SYNTH_DEVICE = "synth-device"
+    const val SYNTH_HOST = "synth-host"
     const val ANSWER_LONG = "answer-long"
     const val ANSWER_BOTH = "answer-both"
 
@@ -39,7 +41,11 @@ object VoiceMenu {
      * @param mode the habit that is set right now.
      * @returns three rows: the new conversation, then the two habits with their explanations.
      */
-    fun items (mode: VoiceMode, answerMode: AnswerMode = AnswerMode.LONG): List<Item> = listOf(
+    fun items (
+        mode: VoiceMode,
+        answerMode: AnswerMode = AnswerMode.LONG,
+        synth: String = "device",
+    ): List<Item> = listOf(
         Item(
             id = NEW_SESSION,
             title = "Новая сессия",
@@ -62,6 +68,11 @@ object VoiceMenu {
         Item(ANSWER_SHORT, AnswerMode.SHORT.title, null, answerMode == AnswerMode.SHORT),
         Item(ANSWER_LONG, AnswerMode.LONG.title, null, answerMode == AnswerMode.LONG),
         Item(ANSWER_BOTH, AnswerMode.BOTH.title, null, answerMode == AnswerMode.BOTH),
+        // where the voice comes from: the phone's engine or the harness. It travels with every
+        // take, so the next recording picks the choice up without restarting the node.
+        Item(id = SEPARATOR, title = "Способ синтеза звука", subtitle = null, checked = false, separator = true),
+        Item(SYNTH_DEVICE, "TTS на Android", null, synth != "host"),
+        Item(SYNTH_HOST, "Синтез на DSH", null, synth == "host"),
     )
 
     /** Which form an item selects, or null when the item is not about a form. */
@@ -69,6 +80,13 @@ object VoiceMenu {
         ANSWER_SHORT -> AnswerMode.SHORT
         ANSWER_LONG -> AnswerMode.LONG
         ANSWER_BOTH -> AnswerMode.BOTH
+        else -> null
+    }
+
+    /** Which synthesis an item selects: `host`, `device`, or null when the row is about something else. */
+    fun synthOf (id: String): String? = when (id) {
+        SYNTH_DEVICE -> "device"
+        SYNTH_HOST -> "host"
         else -> null
     }
 

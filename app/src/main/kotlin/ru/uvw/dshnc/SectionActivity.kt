@@ -77,7 +77,7 @@ class SectionActivity : AppCompatActivity() {
 
         when (section) {
             "auth" -> buildAuth(pad)
-            "android" -> buildAndroid(pad)
+            "android" -> { buildAndroid(pad); buildDebug(pad) }
             "roots" -> buildRoots()
             "apps" -> buildApps(pad)
             else -> buildNet(pad)
@@ -198,11 +198,13 @@ class SectionActivity : AppCompatActivity() {
      * setting consists of several parts.
      */
     private fun buildAndroid (pad: Int) {
+        // an OEM build may refuse the call, and a settings screen must survive that
+        val allFiles = runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
         push(Ui.itemEx(
             this,
             getString(R.string.menu_fs_access),
-            stateLine(android.os.Environment.isExternalStorageManager()),
-            Ui.stateColor(android.os.Environment.isExternalStorageManager()),
+            stateLine(allFiles),
+            Ui.stateColor(allFiles),
             getString(R.string.help_all_files),
             { openAllFiles() },
         ))
@@ -352,6 +354,21 @@ class SectionActivity : AppCompatActivity() {
     }
 
     /** What exactly the node sees: the packages and the names. */
+    /**
+     * The debug switch: `session.debug_info` is off unless the owner allows it, and the only place
+     * that used to grant it was the settings screen nobody could reach.
+     */
+    private fun buildDebug (pad: Int) {
+        val debug = android.widget.CheckBox(this).apply {
+            text = getString(R.string.menu_debug_info)
+            isChecked = store.debugInfo
+            setPadding(0, pad, 0, 0)
+        }
+        debug.setOnCheckedChangeListener { _, checked -> store.debugInfo = checked }
+        root.addView(Ui.divider(this))
+        root.addView(debug)
+    }
+
     private fun buildApps (pad: Int) {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val items = packageManager.queryIntentActivities(intent, 0)
@@ -374,13 +391,18 @@ class SectionActivity : AppCompatActivity() {
     private fun buildNet (pad: Int) {
         val ping = EditText(this).apply { setText(store.pingInterval.toString()) }
         val factor = EditText(this).apply { setText(store.pingFactor.toString()) }
+        val poll = EditText(this).apply { setText(store.pollFallback.toString()) }
         root.addView(TextView(this).apply { text = getString(R.string.menu_ping_hint); setPadding(0, pad, 0, 0) })
         root.addView(ping)
         root.addView(TextView(this).apply { text = getString(R.string.menu_stretch_hint); setPadding(0, pad, 0, 0) })
         root.addView(factor)
+        // the fallback poll was only reachable on the old settings screen, which had no entry
+        root.addView(TextView(this).apply { text = getString(R.string.menu_poll_hint); setPadding(0, pad, 0, 0) })
+        root.addView(poll)
         root.addView(Ui.button(this, getString(R.string.menu_save)) {
             store.pingInterval = ping.text.toString().toIntOrNull() ?: 15
             store.pingFactor = factor.text.toString().toIntOrNull() ?: 10
+            store.pollFallback = poll.text.toString().toIntOrNull() ?: 0
             status.text = getString(R.string.menu_saved)
         })
         root.addView(status)
