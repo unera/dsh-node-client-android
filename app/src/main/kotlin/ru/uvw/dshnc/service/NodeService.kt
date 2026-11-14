@@ -708,7 +708,7 @@ class NodeService : Service() {
                     submitResult(api, token, seq, answer)
                 }
                 method == "post" && args.has("id") -> notifications.handle(method, args)
-                method == "say" || method == "stop" || method == "caps" || method == "chat" || method == "record" || method == "play" -> voice.handle(method, args, seq, commandSeconds) { answer ->
+                method == "say" || method == "stop" || method == "caps" || method == "chat" || method == "activity" || method == "record" || method == "play" -> voice.handle(method, args, seq, commandSeconds) { answer ->
                     submitResult(api, token, seq, answer)
                 }
                 method.startsWith("alarm_") || method == "apps" || method == "camera_snap" || method == "photos_latest" || method.startsWith("device_") -> device.handle(method, args, commandSeconds)

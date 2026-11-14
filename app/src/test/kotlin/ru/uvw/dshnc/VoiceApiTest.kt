@@ -37,7 +37,7 @@ class VoiceApiTest {
         val methods = schema.optJSONArray("methods")
         assertNotNull(methods)
         val names = (0 until methods!!.length()).map { methods.getJSONObject(it).optString("method") }
-        assertEquals(listOf("caps", "say", "stop", "chat", "play", "record"), names)
+        assertEquals(listOf("caps", "say", "stop", "chat", "activity", "play", "record"), names)
     }
 
     @Test
@@ -171,36 +171,56 @@ class VoiceApiTest {
             0.0,
         ) { }
         assertEquals("ok", outcome.optString("status"))
-        assertEquals(true, outcome.optJSONObject("payload")!!.optBoolean("shown"))
-        val stored = ru.uvw.dshnc.logic.VoiceChatBus.snapshot().last { it.id == "x-1" }
-        assertEquals(ru.uvw.dshnc.logic.VoiceChat.MAX_TEXT, stored.text.length)
-        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        assertEquals(true, outcome.optJSONObject("payload")!!.optBoolean("queued"))
+        val item = ru.uvw.dshnc.logic.VoiceInbox.drain().single() as ru.uvw.dshnc.logic.VoiceInbox.Item.Chat
+        assertEquals(ru.uvw.dshnc.logic.VoiceChat.MAX_TEXT, item.text.length)
     }
 
 
     @Test
-    fun chatReportsShownOnlyWhenTheLineIsNew () {
+    fun chatQueuesTheLineAndAnswersAtOnce () {
+        ru.uvw.dshnc.logic.VoiceInbox.clear()
         ru.uvw.dshnc.logic.VoiceChatBus.clear()
         try {
-            val first = api.handle(
+            val outcome = api.handle(
                 "chat",
                 JSONObject().put("role", "assistant").put("text", "ответ").put("id", "q-1"),
                 30L,
                 0.0,
             ) { }
-            assertEquals("ok", first.optString("status"))
-            assertEquals(true, first.optJSONObject("payload")!!.optBoolean("shown"))
-            val again = api.handle(
-                "chat",
-                JSONObject().put("role", "assistant").put("text", "ответ").put("id", "q-1"),
+            assertEquals("ok", outcome.optString("status"))
+            assertEquals(true, outcome.optJSONObject("payload")!!.optBoolean("queued"))
+            // nothing is drawn by the handler: the screen drains the queue itself
+            assertEquals(1, ru.uvw.dshnc.logic.VoiceInbox.size())
+            val item = ru.uvw.dshnc.logic.VoiceInbox.drain().single() as ru.uvw.dshnc.logic.VoiceInbox.Item.Chat
+            assertEquals("ответ", item.text)
+            assertEquals("q-1", item.id)
+            assertEquals(ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, item.role)
+            assertEquals(0, ru.uvw.dshnc.logic.VoiceChatBus.snapshot().size)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceInbox.clear()
+        }
+    }
+
+    @Test
+    fun activityQueuesOneStepAndRefusesANegativeNumber () {
+        ru.uvw.dshnc.logic.VoiceInbox.clear()
+        try {
+            val outcome = api.handle(
+                "activity",
+                JSONObject().put("n", 17).put("name", "bash").put("id", "q-1"),
                 31L,
                 0.0,
             ) { }
-            // a repeated line is not new content: the host is told, not reassured
-            assertEquals("error", again.optString("status"))
-            assertEquals("duplicate", again.optString("code"))
+            assertEquals("ok", outcome.optString("status"))
+            assertEquals(true, outcome.optJSONObject("payload")!!.optBoolean("queued"))
+            val item = ru.uvw.dshnc.logic.VoiceInbox.drain().single() as ru.uvw.dshnc.logic.VoiceInbox.Item.Activity
+            assertEquals(17L, item.n)
+            assertEquals("bash", item.name)
+            val bad = api.handle("activity", JSONObject().put("n", -3), 32L, 0.0) { }
+            assertEquals("bad_args", bad.optString("code"))
         } finally {
-            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            ru.uvw.dshnc.logic.VoiceInbox.clear()
         }
     }
 

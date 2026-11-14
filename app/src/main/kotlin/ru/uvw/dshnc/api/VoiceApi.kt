@@ -12,6 +12,8 @@ import java.util.Locale
 import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
+import ru.uvw.dshnc.logic.VoiceInbox
+import ru.uvw.dshnc.logic.VoiceSpeaker
 import ru.uvw.dshnc.store.TokenStore
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.logic.VoiceOutbox
@@ -63,6 +65,19 @@ class VoiceApi (private val context: Context) {
      */
     @Volatile var downloader: ((seq: Long, localPath: String, commandSeconds: Double) -> JSONObject)? = null
 
+    /**
+     * The one queue of sentences.
+     *
+     * Speech must never interrupt itself: a new answer arriving while the phone is still talking
+     * waits its turn. Both ways of voicing — the device engine and a file synthesized on the host —
+     * go through this single worker, so the ordering holds across them too.
+     */
+    private val speaker = VoiceSpeaker(
+        speakText = { text -> speakBlocking(text) },
+        playAudio = { audio, seq -> playBlocking(audio, seq) },
+        log = { kind, detail -> TokenStore(context).addEvent(kind, detail) },
+    )
+
     fun schema (): JSONObject = JSONObject()
         .put("name", "voice")
         .put("version", NodeApi.VERSION)
@@ -84,6 +99,11 @@ class VoiceApi (private val context: Context) {
                 "chat",
                 "Show one line in the voice conversation: the transcript of the take, or the answer",
                 chatArgs(),
+            ))
+            .put(method(
+                "activity",
+                "Show one step of the work in a single progress line, replacing the previous step",
+                activityArgs(),
             ))
             .put(method(
                 "play",
@@ -109,8 +129,23 @@ class VoiceApi (private val context: Context) {
                 .put("description", "The line itself; longer than 4000 characters is clipped"))
             .put("id", JSONObject()
                 .put("type", "string")
-                .put("description", "The exchange id from the upload: it pairs a take with its transcript")))
+                .put("description", "The exchange id from the upload: it pairs a take with its transcript"))
+            .put("say", JSONObject()
+                .put("type", "boolean")
+                .put("description", "assistant only: voice this line on the phone"))
+            .put("audio", JSONObject()
+                .put("type", "string")
+                .put("description", "A synthesized file on the host to play instead of the system engine")))
         .put("required", JSONArray().put("role").put("text"))
+
+    /** The `activity` arguments: one step of the model's work, shown as a single progress line. */
+    private fun activityArgs (): JSONObject = JSONObject()
+        .put("type", "object")
+        .put("properties", JSONObject()
+            .put("n", JSONObject().put("type", "number").put("description", "The step number the host counts"))
+            .put("name", JSONObject().put("type", "string").put("description", "What is being done, e.g. bash"))
+            .put("id", JSONObject().put("type", "string").put("description", "The exchange this step belongs to")))
+        .put("required", JSONArray().put("n"))
 
     /** The `play` arguments: the file is named by its path on the host. */
     private fun playArgs (): JSONObject = JSONObject()
@@ -162,7 +197,8 @@ class VoiceApi (private val context: Context) {
     ): JSONObject = when (method) {
         "caps" -> caps()
         "say" -> say(args, seq, commandSeconds, submit)
-        "chat" -> chat(args)
+        "chat" -> chat(args, seq)
+        "activity" -> activity(args)
         "play" -> play(args, seq, commandSeconds)
         "record" -> record(args, seq, commandSeconds, submit)
         "stop" -> stop()
@@ -326,7 +362,7 @@ class VoiceApi (private val context: Context) {
      * opens. Nothing here waits for the sound — the answer is usually already on its way to the
      * player as a separate `play` command.
      */
-    private fun chat (args: JSONObject): JSONObject {
+    private fun chat (args: JSONObject, seq: Long): JSONObject {
         val events = TokenStore(context)
         val rawRole = args.optString("role")
         val role = VoiceChat.Role.parse(rawRole)
@@ -341,20 +377,43 @@ class VoiceApi (private val context: Context) {
         }
         val id = args.optString("id").trim()
         val text = VoiceChat.clip(raw)
-        val change = VoiceChatBus.put(id, role, text)
-        if (change == VoiceChatLog.Change.IGNORED) {
-            // the line is already there: saying "shown" again would be a lie about new content
-            events.addEvent("chat-повтор", "$rawRole ${text.length} симв, id=$id")
-            return err("duplicate", "такая реплика уже показана")
+        val say = role == VoiceChat.Role.ASSISTANT && args.optBoolean("say", false)
+        val audio = args.optString("audio").trim().takeIf { it.isNotEmpty() }
+        // the command answers here and now: drawing belongs to the screen, speech to its own queue
+        VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text))
+        if (say || audio != null) {
+            speaker.submit(VoiceSpeaker.Task(id = id, text = text, audio = audio, seq = seq))
         }
-        // temporary diagnostics: the host reads them through session.debug_info when the screen
-        // looks empty and the only question is whether the line ever arrived
         events.addEvent(
             "chat " + if (role == VoiceChat.Role.USER) "user" else "assistant",
-            "${text.length} симв, id=$id, ${if (change == VoiceChatLog.Change.REPLACED) "замена" else "новая"}",
+            buildString {
+                append("${text.length} симв")
+                if (say) append(" say=1")
+                if (audio != null) append(" audio=$audio")
+                if (id.isNotEmpty()) append(" id=$id")
+            },
         )
-        return ok(JSONObject().put("shown", true))
+        return queued()
     }
+
+    /**
+     * One step of the work, worth a single line.
+     *
+     * The screen replaces the previous step instead of collecting them: the person needs to know
+     * that something is happening and roughly what, not the whole trace — the trace is in the web.
+     */
+    private fun activity (args: JSONObject): JSONObject {
+        val n = args.optLong("n", -1L)
+        if (n < 0) return err("bad_args", "нужен неотрицательный n")
+        val name = args.optString("name").trim()
+        val id = args.optString("id").trim()
+        VoiceInbox.post(VoiceInbox.Item.Activity(id, n, name))
+        TokenStore(context).addEvent("activity", "$n ${if (name.isEmpty()) "—" else name}")
+        return queued()
+    }
+
+    /** The answer of a command that only hands work to the screen. */
+    private fun queued () = ok(JSONObject().put("queued", true))
 
     /**
      * Pull one file from the host and start playing it.
@@ -404,6 +463,94 @@ class VoiceApi (private val context: Context) {
             runCatching { player.release() }
             runCatching { target.delete() }
             err("voice_failed", "не удалось воспроизвести: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Say one text and wait for the engine to finish it.
+     *
+     * Used by the speech queue, which is why it blocks: the worker's whole job is to make one
+     * sentence follow the previous one instead of cutting into it.
+     */
+    private fun speakBlocking (text: String) {
+        val engine = engine() ?: throw IllegalStateException(failure ?: "системный синтез речи недоступен")
+        val locale = Locale.forLanguageTag(DEFAULT_LANGUAGE)
+        val support = runCatching { engine.setLanguage(locale) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
+        if (support == TextToSpeech.LANG_MISSING_DATA || support == TextToSpeech.LANG_NOT_SUPPORTED) {
+            throw IllegalStateException("движок не умеет $DEFAULT_LANGUAGE: нужен языковой пакет")
+        }
+        val utteranceId = "dshnc-speech-${utteranceCounter.incrementAndGet()}"
+        val finished = CountDownLatch(1)
+        val outcome = AtomicReference(OUTCOME_NONE)
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart (id: String?) {}
+            override fun onDone (id: String?) {
+                outcome.compareAndSet(OUTCOME_NONE, OUTCOME_DONE)
+                finished.countDown()
+            }
+
+            @Deprecated("older engines still call this one")
+            override fun onError (id: String?) {
+                outcome.compareAndSet(OUTCOME_NONE, OUTCOME_FAILED)
+                finished.countDown()
+            }
+
+            override fun onError (id: String?, errorCode: Int) {
+                outcome.compareAndSet(OUTCOME_NONE, OUTCOME_FAILED)
+                finished.countDown()
+            }
+
+            override fun onStop (id: String?, interrupted: Boolean) {
+                outcome.compareAndSet(OUTCOME_NONE, OUTCOME_STOPPED)
+                finished.countDown()
+            }
+        })
+        speaking[utteranceId] = 0L
+        val accepted = runCatching { engine.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), utteranceId) }
+            .getOrDefault(TextToSpeech.ERROR)
+        if (accepted != TextToSpeech.SUCCESS) {
+            speaking.remove(utteranceId)
+            throw IllegalStateException("движок отказался говорить (код $accepted)")
+        }
+        if (!finished.await(MAX_SPEECH_SECONDS, TimeUnit.SECONDS)) {
+            runCatching { engine.stop() }
+            speaking.remove(utteranceId)
+            throw IllegalStateException("движок не закончил речь за $MAX_SPEECH_SECONDS с")
+        }
+        speaking.remove(utteranceId)
+        if (outcome.get() != OUTCOME_DONE) throw IllegalStateException("речь прервана или не удалась")
+    }
+
+    /**
+     * Fetch one host file by this command's ticket and play it to the end.
+     *
+     * Blocking as well, and by the same rule: the queue decides when a sentence may begin, so a
+     * played replique must end before the next one starts.
+     */
+    private fun playBlocking (audio: String, seq: Long) {
+        val download = downloader ?: throw IllegalStateException("узел не подключился к серверу")
+        val target = File(context.cacheDir, "speech-$seq.wav")
+        try {
+            val fetched = download(seq, target.absolutePath, 0.0)
+            if (fetched.optString("status") != "ok") {
+                throw IllegalStateException(fetched.optString("message").ifBlank { "файл не скачался" })
+            }
+            val player = MediaPlayer()
+            val done = CountDownLatch(1)
+            try {
+                player.setDataSource(target.absolutePath)
+                player.prepare()
+                player.setOnCompletionListener { done.countDown() }
+                player.start()
+                if (!done.await(MAX_SPEECH_SECONDS, TimeUnit.SECONDS)) {
+                    throw IllegalStateException("воспроизведение не закончилось за $MAX_SPEECH_SECONDS с")
+                }
+            } finally {
+                runCatching { player.stop() }
+                runCatching { player.release() }
+            }
+        } finally {
+            runCatching { target.delete() }
         }
     }
 
@@ -580,6 +727,9 @@ class VoiceApi (private val context: Context) {
 
         /** A ceiling nobody wants to hit by accident: five minutes of speech in one command. */
         const val MAX_RECORD_SECONDS = 300.0
+
+        /** A single sentence or replique never legitimately takes longer than this. */
+        private const val MAX_SPEECH_SECONDS = 300L
 
         /** How long the engine may take to say it is ready. */
         private const val INIT_TIMEOUT_MS = 5_000L

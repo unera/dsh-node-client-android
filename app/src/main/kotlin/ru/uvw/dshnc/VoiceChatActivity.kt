@@ -23,6 +23,7 @@ import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
 import ru.uvw.dshnc.logic.VoiceFiles
+import ru.uvw.dshnc.logic.VoiceInbox
 import ru.uvw.dshnc.logic.VoiceOutbox
 import ru.uvw.dshnc.logic.VoiceUpload
 import ru.uvw.dshnc.store.TokenStore
@@ -46,6 +47,10 @@ class VoiceChatActivity : AppCompatActivity() {
     private lateinit var chat: LinearLayout
     /** The line that says what the microphone is doing: «слушаю» then «отправлено хосту». */
     private lateinit var stateLine: TextView
+    /** One line for the model's current step: it replaces the previous step, it does not pile up. */
+    private lateinit var progressLine: TextView
+    /** The exchange whose steps are being shown: its answer clears the line. */
+    private var progressExchange = ""
     private lateinit var scroller: ScrollView
     private lateinit var meter: ProgressBar
     private lateinit var hint: TextView
@@ -76,8 +81,8 @@ class VoiceChatActivity : AppCompatActivity() {
         mode = VoiceMode.of(store.voiceMode)
         setContentView(build())
         VoiceOutbox.onEvent = { event, recording -> runOnUiThread { onOutbox(event, recording?.seconds) } }
-        VoiceChatBus.onChanged = { runOnUiThread { renderChat() } }
-        renderChat()
+        VoiceInbox.onPosted = { runOnUiThread { drainInbox() } }
+        drainInbox()
         renderMode()
         show("готов")
         tick(0)
@@ -109,6 +114,12 @@ class VoiceChatActivity : AppCompatActivity() {
         stateLine = TextView(this).apply {
             textSize = 18f
             setTextColor(Color.parseColor("#93c5fd"))
+            setPadding(0, (6 * density).toInt(), 0, 0)
+            visibility = View.GONE
+        }
+        progressLine = TextView(this).apply {
+            textSize = 15f
+            setTextColor(Color.parseColor("#9ca3af"))
             setPadding(0, (6 * density).toInt(), 0, 0)
             visibility = View.GONE
         }
@@ -279,6 +290,7 @@ class VoiceChatActivity : AppCompatActivity() {
         // the take appears at once and carries its exchange id: the transcript that arrives later
         // replaces this very line instead of standing next to it
         VoiceChatBus.recording(exchange, "вы · ${"%.1f".format(take.seconds)} с")
+        renderChat()
         setState("отправлено")
         sendTake(take, recordStartedAt, stoppedAt, exchange)
         renderIdle()
@@ -354,6 +366,43 @@ class VoiceChatActivity : AppCompatActivity() {
     }
 
     /**
+     * Take everything the host has sent and show it.
+     *
+     * This runs on the main thread and only here: the command handlers put items in the queue and
+     * answer at once, so neither a slow draw nor a closed screen can hold up the node.
+     */
+    private fun drainInbox () {
+        val items = VoiceInbox.drain()
+        if (items.isEmpty()) {
+            renderChat()
+            return
+        }
+        for (item in items) {
+            when (item) {
+                is VoiceInbox.Item.Chat -> {
+                    VoiceChatBus.putQuiet(item.id, item.role, item.text)
+                    // the answer ends the work: the progress line has nothing left to report
+                    if (item.role == VoiceChat.Role.ASSISTANT && (item.id.isEmpty() || item.id == progressExchange)) {
+                        hideProgress()
+                    }
+                }
+                is VoiceInbox.Item.Activity -> {
+                    progressExchange = item.id.ifEmpty { progressExchange }
+                    progressLine.text = "${item.n}. ${item.name.ifEmpty { "…" }}"
+                    progressLine.visibility = View.VISIBLE
+                }
+            }
+        }
+        renderChat()
+    }
+
+    /** The step is over: the line goes away rather than turning into history. */
+    private fun hideProgress () {
+        progressLine.visibility = View.GONE
+        progressLine.text = ""
+    }
+
+    /**
      * Draw the whole conversation from the shared log.
      *
      * Redrawing everything is cheap at two hundred lines and it removes a whole class of bugs: a
@@ -363,6 +412,7 @@ class VoiceChatActivity : AppCompatActivity() {
     private fun renderChat () {
         chat.removeAllViews()
         for (entry in VoiceChatBus.snapshot()) chat.addView(view(entry))
+        if (progressLine.parent == null && progressLine.visibility == View.VISIBLE) chat.addView(progressLine)
         if (stateLine.parent == null) chat.addView(stateLine)
         scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
@@ -395,6 +445,7 @@ class VoiceChatActivity : AppCompatActivity() {
     /** A note of the screen's own: small and grey, never mistaken for a remark. */
     private fun addLine (text: String) {
         VoiceChatBus.system(text)
+        renderChat()
     }
 
     private fun show (text: String) {
@@ -436,15 +487,15 @@ class VoiceChatActivity : AppCompatActivity() {
 
     override fun onResume () {
         super.onResume()
-        // coming back to a screen that was in the background: the log is the truth, draw it again
-        VoiceChatBus.onChanged = { runOnUiThread { renderChat() } }
-        renderChat()
+        // coming back to a screen that was in the background: the queue kept the lines, drain them
+        VoiceInbox.onPosted = { runOnUiThread { drainInbox() } }
+        drainInbox()
     }
 
     override fun onDestroy () {
         super.onDestroy()
         ticker.removeCallbacksAndMessages(null)
         recorder.cancel()
-        VoiceChatBus.onChanged = null
+        VoiceInbox.onPosted = null
     }
 }
