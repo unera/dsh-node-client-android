@@ -16,11 +16,14 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import ru.uvw.dshnc.api.NodeApi
 import ru.uvw.dshnc.logic.Recorder
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.api.VoiceEvents
 import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatUi
+import ru.uvw.dshnc.logic.VoiceMenu
+import ru.uvw.dshnc.logic.VoiceTimer
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
 import ru.uvw.dshnc.logic.VoiceFiles
@@ -58,9 +61,10 @@ class VoiceChatActivity : AppCompatActivity() {
     private lateinit var hint: TextView
     private lateinit var talk: TextView
     private lateinit var cancel: TextView
-    /** The two mode buttons that sit on the big circle. */
-    private lateinit var modePtt: TextView
-    private lateinit var modeToggle: TextView
+    /** The clock on the record button: `0:07 / 0:30`. */
+    private lateinit var timerLine: TextView
+    /** The menu, while it is open: dismissed from the rows themselves. */
+    private var popup: android.widget.PopupWindow? = null
     /** The screen's own small decisions: the hint and the mode, testable without a device. */
     private lateinit var ui: VoiceChatUi
 
@@ -70,6 +74,8 @@ class VoiceChatActivity : AppCompatActivity() {
     private var holding = false
     /** When the microphone opened, for the diagnostics on the wire: 0 means "not known". */
     private var recordStartedAt = 0L
+    /** True while the screen considers a take to be running, including the auto-stop moment. */
+    private var recording = false
 
     private val permissionRequest = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
@@ -89,7 +95,6 @@ class VoiceChatActivity : AppCompatActivity() {
         VoiceOutbox.onEvent = { event, recording -> runOnUiThread { onOutbox(event, recording?.seconds) } }
         VoiceInbox.onPosted = { runOnUiThread { drainInbox() } }
         drainInbox()
-        renderModeButtons()
         refreshHint(0.0)
         show("готов")
         tick(0)
@@ -101,6 +106,23 @@ class VoiceChatActivity : AppCompatActivity() {
         val pad = (16 * density).toInt()
         val root = Ui.screen(this, "Голосовой чат") { finish() }
         root.setPadding(0, 0, 0, 0)
+        // the habits live in this menu now: on the screen the squares were in the way
+        val header = root.getChildAt(0) as LinearLayout
+        header.addView(android.view.View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        })
+        header.addView(TextView(this).apply {
+            text = "⋮"
+            textSize = 24f
+            gravity = Gravity.CENTER
+            contentDescription = "меню голосового чата"
+            val size = (24 * density).toInt()
+            val margin = (16 * density).toInt()
+            layoutParams = LinearLayout.LayoutParams(size, size).apply { setMargins(margin, 0, margin, 0) }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { openMenu(it) }
+        })
 
         // the conversation: everything spoken so far, newest at the bottom
         chat = LinearLayout(this).apply {
@@ -126,78 +148,76 @@ class VoiceChatActivity : AppCompatActivity() {
         root.addView(scroller)
 
         // the hint stands above the big button and is always there: a person should not have to
-        // remember which habit the button has
+        // remember which habit the button has. Small on purpose: it is a hint, not a title.
         hint = TextView(this).apply {
-            textSize = 16f
+            textSize = 11f
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#9ca3af"))
             setPadding(pad, (4 * density).toInt(), pad, (4 * density).toInt())
         }
         root.addView(hint)
 
-        // The stage holds the circle and the two mode buttons that overlap it. Sizes are in
-        // pixels, and the buttons are placed on the circle's edges by hand: the right one is
-        // centred on the right edge, the top one on the top edge, each half outside the circle.
         val width = resources.displayMetrics.widthPixels
-        val diameter = minOf(
+        // a rectangle, not a circle, and a fifth smaller than the round button it replaces:
+        // 80% of min(width - 32 dp, height/3), with a 0.6 aspect so it reads as a bar
+        val box = minOf(
             width - pad * 2,
             resources.displayMetrics.heightPixels / 3,
         )
-        // 66 dp squares: a thumb in a car should not have to aim. They hang over the circle by
-        // 26 dp — deliberately more than before, the pair reads as attached to it.
-        val corner = (66 * density).toInt()
-        val overlap = (26 * density).toInt()
+        val buttonWidth = (box * 0.8).toInt()
+        val buttonHeight = (buttonWidth * 0.6).toInt()
 
         // one divider, not two: the level bar is the only line between the conversation and the
-        // button, and it sits a little lower than the text above it
+        // button, and it sits right above the button with a small gap
         meter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (6 * density).toInt())
-                .apply { setMargins(pad, (16 * density).toInt(), pad, 0) }
+                .apply { setMargins(pad, (4 * density).toInt(), pad, (8 * density).toInt()) }
         }
         root.addView(meter)
 
         val stage = android.widget.FrameLayout(this).apply {
             clipChildren = false
             clipToPadding = false
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                corner + diameter,
-            ).apply { setMargins(0, 0, 0, (16 * density).toInt()) }
+            layoutParams = LinearLayout.LayoutParams(buttonWidth, buttonHeight).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                setMargins(0, 0, 0, (16 * density).toInt())
+            }
         }
 
         talk = TextView(this).apply {
             text = "🎤"
-            textSize = 52f
+            textSize = 44f
             gravity = Gravity.CENTER
             contentDescription = "говорить"
             background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 24 * density
                 setColor(Color.parseColor("#2563eb"))
             }
-            layoutParams = android.widget.FrameLayout.LayoutParams(diameter, diameter).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            }
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            )
         }
         stage.addView(talk)
 
-        // Both buttons stand above the circle, symmetric about its centre, each hovering over
-        // one edge: left is «держать», right is «переключение».
-        val boxes = ui.modeButtonBoxes(width, diameter, corner, overlapPx = overlap)
-        modePtt = modeButton("✋", "режим: держать")
-        modePtt.layoutParams = android.widget.FrameLayout.LayoutParams(corner, corner).apply {
-            leftMargin = boxes[0].left
-            topMargin = boxes[0].top
+        // the clock runs along the bottom of the button: how long it lasts and how long it may
+        timerLine = TextView(this).apply {
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = (8 * density).toInt()
+            }
         }
-        stage.addView(modePtt)
-
-        modeToggle = modeButton("⏯", "режим: переключение")
-        modeToggle.layoutParams = android.widget.FrameLayout.LayoutParams(corner, corner).apply {
-            leftMargin = boxes[1].left
-            topMargin = boxes[1].top
-        }
-        stage.addView(modeToggle)
+        stage.addView(timerLine)
         root.addView(stage)
 
         cancel = TextView(this).apply {
@@ -243,62 +263,119 @@ class VoiceChatActivity : AppCompatActivity() {
         return root
     }
 
-    /**
-     * One square mode button that sits on the big circle.
-     *
-     * A plain view inside a frame layout: it never lists a touch listener for the circle, so a tap
-     * here changes the habit and nothing else. Recording starts only on the circle itself.
-     */
-    private fun modeButton (icon: String, description: String): TextView {
-        val density = resources.displayMetrics.density
-        return TextView(this).apply {
-            text = icon
-            textSize = 28f
-            gravity = Gravity.CENTER
-            contentDescription = description
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { selectMode(if (icon == "✋") VoiceMode.PTT else VoiceMode.TOGGLE) }
-            setPadding(0, 0, 0, 0)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 10 * density
-                setColor(Color.parseColor("#1f2937"))
-            }
-        }
-    }
-
     /** Choose the habit: it changes the mode and the picture, never the microphone. */
     private fun selectMode (next: VoiceMode) {
         if (!ui.selectMode(next)) return
         mode = ui.mode
         store.voiceMode = mode.wire
-        renderModeButtons()
         refreshHint(0.0)
     }
 
-    /** The chosen mode is a blue accent, the other is a grey outline; both dim while recording. */
-    private fun renderModeButtons () {
+    /**
+     * The overflow menu: the two habits, and starting a new conversation.
+     *
+     * A plain `PopupMenu` cannot carry the small grey captions the modes need, so the rows are
+     * built here; the list itself comes from [VoiceMenu], which is where its order and marks are
+     * tested.
+     */
+    private fun openMenu (anchor: View) {
         val density = resources.displayMetrics.density
-        val recording = recorder.isRecording
-        fun paint (view: TextView, active: Boolean) {
-            view.alpha = ui.modeButtonsAlpha(recording)
-            view.isEnabled = ui.modeButtonsEnabled(recording)
-            view.setTextColor(if (active) Color.WHITE else Color.parseColor("#9ca3af"))
-            view.background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 10 * density
-                if (active) {
-                    setColor(Color.parseColor("#2563eb"))
-                } else {
-                    setColor(Color.parseColor("#d91f2937")) // #1f2937 at 85%
-                    setStroke((1 * density).toInt(), Color.parseColor("#4b5563"))
-                }
-            }
+        val rows = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#1f2937"))
+            setPadding(0, (8 * density).toInt(), 0, (8 * density).toInt())
         }
-        paint(modePtt, mode == VoiceMode.PTT)
-        paint(modeToggle, mode == VoiceMode.TOGGLE)
-        talk.text = if (mode == VoiceMode.TOGGLE && recording) "⏹" else "🎤"
+        for (item in VoiceMenu.items(mode)) {
+            rows.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding((16 * density).toInt(), (10 * density).toInt(), (16 * density).toInt(), (10 * density).toInt())
+                isClickable = true
+                setOnClickListener {
+                    popup?.dismiss()
+                    onMenuItem(item.id)
+                }
+                addView(LinearLayout(this@VoiceChatActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    addView(TextView(this@VoiceChatActivity).apply {
+                        text = item.title
+                        textSize = 16f
+                        setTextColor(Color.WHITE)
+                    })
+                    item.subtitle?.let { subtitle ->
+                        addView(TextView(this@VoiceChatActivity).apply {
+                            text = subtitle
+                            textSize = 12f
+                            setTextColor(Color.parseColor("#9ca3af"))
+                            setPadding(0, (2 * density).toInt(), 0, 0)
+                        })
+                    }
+                })
+                // the habit that is set right now is marked, the action is not
+                if (item.checked) {
+                    addView(TextView(this@VoiceChatActivity).apply {
+                        text = "✓"
+                        textSize = 18f
+                        setTextColor(Color.parseColor("#2563eb"))
+                        setPadding((12 * density).toInt(), 0, 0, 0)
+                    })
+                }
+            })
+        }
+        val popup = android.widget.PopupWindow(
+            rows,
+            (280 * density).toInt(),
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            true,
+        ).apply {
+            isOutsideTouchable = true
+            elevation = 8 * density
+        }
+        this.popup = popup
+        popup.showAsDropDown(anchor, 0, (4 * density).toInt())
+    }
+
+    /** Act on a menu row: switch the habit, or start a new conversation on the host. */
+    private fun onMenuItem (id: String) {
+        VoiceMenu.modeOf(id)?.let { next ->
+            selectMode(next)
+            return
+        }
+        if (id == VoiceMenu.NEW_SESSION) newSession()
+    }
+
+    /**
+     * Start a new conversation on the host.
+     *
+     * The history is cleared only when the host accepted: a cleared screen with the old session
+     * still on the other side would be a lie about what the next remark does.
+     */
+    private fun newSession () {
+        val base = store.base
+        val token = store.token
+        if (base == null || token == null) {
+            addLine("хост не ответил")
+            return
+        }
+        Thread({
+            val ok = runCatching {
+                NodeApi(base).sendEvent(token, org.json.JSONObject()
+                    .put("type", "voice")
+                    .put("action", "new-session"))
+                true
+            }.getOrDefault(false)
+            runOnUiThread {
+                if (!ok) {
+                    addLine("хост не ответил")
+                    return@runOnUiThread
+                }
+                VoiceInbox.clear()
+                VoiceChatBus.clear()
+                hideProgress()
+                addLine("новая сессия")
+            }
+        }, "dshnc-voice-session").start()
     }
 
     /** The line above the button: the habit, or the clock while a take is running. */
@@ -322,19 +399,20 @@ class VoiceChatActivity : AppCompatActivity() {
             permissionRequest.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        recorder.maxSeconds = VoiceOutbox.maxSeconds
+        // the ceiling is the screen's: thirty seconds, whatever the host would allow
+        recorder.maxSeconds = VoiceTimer.LIMIT_SECONDS.toDouble()
         val error = recorder.start()
         if (error != null) {
             show(error)
             return
         }
         recordStartedAt = System.currentTimeMillis()
+        recording = true
         talk.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.parseColor("#dc2626"))
         }
         cancel.visibility = View.VISIBLE
-        renderModeButtons()
         refreshHint(0.0)
         setState("слушаю")
         show("говорите")
@@ -344,7 +422,9 @@ class VoiceChatActivity : AppCompatActivity() {
     }
 
     private fun stopRecording () {
+        recording = false
         cancel.visibility = View.GONE
+        timerLine.visibility = View.GONE
         val take = recorder.stop()
         if (take == null) {
             renderIdle()
@@ -437,7 +517,6 @@ class VoiceChatActivity : AppCompatActivity() {
             shape = GradientDrawable.OVAL
             setColor(Color.parseColor("#2563eb"))
         }
-        renderModeButtons()
         refreshHint(0.0)
     }
 
@@ -576,6 +655,9 @@ class VoiceChatActivity : AppCompatActivity() {
     /** While a take is running the meter and the clock are refreshed ten times a second. */
     private fun tick (elapsed: Int) {
         if (!recorder.isRecording) {
+            // the recorder stops by itself at the ceiling: that is the automatic stop, and the
+            // take is sent as if the person had pressed the button a second time
+            if (elapsed > 0 && recording) finishAtLimit()
             meter.progress = 0
             return
         }
@@ -583,9 +665,17 @@ class VoiceChatActivity : AppCompatActivity() {
         val seconds = elapsed / 10.0
         // the hint over the button is where the person looks: the clock belongs there
         refreshHint(seconds)
-        // the toggle habit shows a stop sign while the microphone is open
-        if (mode == VoiceMode.TOGGLE) talk.text = "⏹"
+        // and the button itself counts: how long it lasts and how long it may
+        timerLine.text = VoiceTimer.label(seconds)
+        timerLine.visibility = View.VISIBLE
         ticker.postDelayed({ tick(elapsed + 1) }, 100)
+    }
+
+    /** Thirty seconds are over: stop, say so, and send what was said. */
+    private fun finishAtLimit () {
+        recording = false
+        addLine("лимит ${VoiceTimer.LIMIT_SECONDS} с, отправлено")
+        stopRecording()
     }
 
     override fun onPause () {

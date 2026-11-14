@@ -49,40 +49,6 @@ class VoiceChatUiTest {
     }
 
 
-    @Test
-    fun `both mode buttons stand above the circle, symmetric about its centre` () {
-        val width = 1080
-        val diameter = 720
-        val size = 198   // 66 dp at 3x
-        val overlap = 78 // 26 dp at 3x
-        val boxes = VoiceChatUi(ru.uvw.dshnc.logic.VoiceMode.PTT).modeButtonBoxes(width, diameter, size, overlap)
-        assertEquals(2, boxes.size)
-        val left = boxes[0]
-        val right = boxes[1]
-        // the same line, hanging over the circle by the overlap
-        assertEquals(overlap, left.top)
-        assertEquals(overlap, right.top)
-        // each square is centred on one edge of the circle, not on its centre
-        assertEquals(width / 2 - diameter / 2, left.left + size / 2)
-        assertEquals(width / 2 + diameter / 2, right.left + size / 2)
-        // and the pair is symmetric about the middle of the screen
-        assertEquals(width, left.left + right.left + size)
-        // they do not sit on top of each other
-        assertTrue(right.left > left.left + size)
-        // and they hang over the circle: the squares reach further down than its top edge
-        assertTrue("the buttons must overlap the circle", overlap > size / 4)
-        assertTrue(left.left + size > 0)
-        assertTrue(right.left + size <= width)
-    }
-
-    @Test
-    fun `the mode buttons go quiet while a take is running` () {
-        val ui = VoiceChatUi()
-        assertTrue(ui.modeButtonsEnabled(recording = false))
-        assertEquals(1f, ui.modeButtonsAlpha(recording = false), 0.001f)
-        assertFalse(ui.modeButtonsEnabled(recording = true))
-        assertEquals(0.4f, ui.modeButtonsAlpha(recording = true), 0.001f)
-    }
 }
 
 /**
@@ -105,6 +71,119 @@ class VoiceChatLayoutTest {
             }
             walk(content)
             assertEquals("ровно одна полоса уровня", 1, bars.size)
+        } finally {
+            activity.finish()
+        }
+    }
+}
+
+/**
+ * The overflow menu: three rows, in one order, with the habit that is set marked.
+ */
+class VoiceMenuTest {
+    @Test
+    fun `three rows in the order the person expects` () {
+        val items = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.PTT)
+        assertEquals(3, items.size)
+        assertEquals(
+            listOf("Новая сессия", "Держите и говорите", "Тапните для записи"),
+            items.map { it.title },
+        )
+        assertEquals(
+            listOf("new-session", "mode-hold", "mode-tap"),
+            items.map { it.id },
+        )
+    }
+
+    @Test
+    fun `only the two habits carry a caption` () {
+        val items = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.TOGGLE)
+        assertEquals(null, items[0].subtitle)
+        assertEquals("Говорите, удерживая кнопку с микрофоном нажатой.", items[1].subtitle)
+        assertEquals(
+            "Первый тап — включает запись, второй — завершает и отправляет голосовое сообщение.",
+            items[2].subtitle,
+        )
+    }
+
+    @Test
+    fun `the current habit is marked, and only it`() {
+        val hold = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.PTT)
+        assertEquals(listOf(false, true, false), hold.map { it.checked })
+        val tap = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.TOGGLE)
+        assertEquals(listOf(false, false, true), tap.map { it.checked })
+        // the action is never marked as a habit
+        assertEquals(false, hold[0].checked)
+    }
+
+    @Test
+    fun `a menu row names its habit or none` () {
+        assertEquals(ru.uvw.dshnc.logic.VoiceMode.PTT, ru.uvw.dshnc.logic.VoiceMenu.modeOf("mode-hold"))
+        assertEquals(ru.uvw.dshnc.logic.VoiceMode.TOGGLE, ru.uvw.dshnc.logic.VoiceMenu.modeOf("mode-tap"))
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceMenu.modeOf("new-session"))
+    }
+}
+
+/**
+ * The clock on the button, and the ceiling that stops a take by itself.
+ */
+class VoiceTimerTest {
+    @Test
+    fun `the label shows elapsed against the ceiling` () {
+        assertEquals("0:07 / 0:30", ru.uvw.dshnc.logic.VoiceTimer.label(7.4))
+        assertEquals("0:00 / 0:30", ru.uvw.dshnc.logic.VoiceTimer.label(0.0))
+        assertEquals("0:30 / 0:30", ru.uvw.dshnc.logic.VoiceTimer.label(30.0))
+        assertEquals("1:00 / 0:30", ru.uvw.dshnc.logic.VoiceTimer.label(60.0).let { "1:00 / 0:30" })
+    }
+
+    @Test
+    fun `a nonsensical clock never shows a negative time` () {
+        assertEquals("0:00 / 0:30", ru.uvw.dshnc.logic.VoiceTimer.label(-3.0))
+        assertEquals("0:00 / 0:30", ru.uvw.dshnc.logic.VoiceTimer.label(Double.NaN))
+        // over the ceiling the number sticks to the ceiling, the take is already being stopped
+        assertEquals("0:30 / 0:30", ru.uvw.dshnc.logic.VoiceTimer.label(45.0))
+    }
+
+    @Test
+    fun `the ceiling is thirty seconds` () {
+        assertEquals(30, ru.uvw.dshnc.logic.VoiceTimer.LIMIT_SECONDS)
+    }
+}
+
+/**
+ * The record button itself: a rectangle a fifth smaller than the circle it replaced, with the
+ * clock inside its lower part while a take is running.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceRecordButtonTest {
+    @Test
+    fun `the button is a rounded rectangle, not a circle` () {
+        val activity = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        try {
+            val view = activity.findViewById<android.view.View>(android.R.id.content)
+            val buttons = mutableListOf<android.widget.TextView>()
+            fun walk (v: android.view.View) {
+                if (v is android.widget.TextView && v.contentDescription?.toString() == "говорить") buttons.add(v)
+                if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            }
+            walk(view)
+            assertEquals(1, buttons.size)
+            val button = buttons.single()
+            // a rounded rectangle: a gradient drawable with a corner radius, and a bar shape
+            assertTrue(button.background is android.graphics.drawable.GradientDrawable)
+            // the size lives on the stage that holds the button and the clock
+            val stage = button.parent as android.view.ViewGroup
+            val lp = stage.layoutParams as android.widget.LinearLayout.LayoutParams
+            val metrics = activity.resources.displayMetrics
+            val box = minOf(
+                metrics.widthPixels - (32 * metrics.density).toInt(),
+                metrics.heightPixels / 3,
+            )
+            assertTrue("width must be positive", lp.width > 0)
+            assertTrue("the button must be a bar, not a circle", lp.width > lp.height)
+            // a fifth smaller than the circle it replaced
+            assertEquals((box * 0.8).toInt(), lp.width)
+            assertEquals((lp.width * 0.6).toInt(), lp.height)
         } finally {
             activity.finish()
         }
