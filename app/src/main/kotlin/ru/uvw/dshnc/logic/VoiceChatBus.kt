@@ -34,6 +34,14 @@ object VoiceChatBus {
         return change
     }
 
+    /** Count one step of the work; the number appears under the answer that follows. */
+    fun countStep (id: String) {
+        synchronized(lock) { log.countStep(id) }
+    }
+
+    /** A caption under the person's line, until the transcript replaces it. */
+    fun note (id: String, text: String): Boolean = synchronized(lock) { log.note(id, text) }
+
     /** A remark the screen makes about itself. */
     fun system (text: String, id: String = "") {
         synchronized(lock) { log.system(text, id) }

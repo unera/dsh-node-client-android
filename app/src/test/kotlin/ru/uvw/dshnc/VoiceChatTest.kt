@@ -199,3 +199,87 @@ class VoiceTakeTest {
         assertEquals("слишком коротко, не отправлено", ru.uvw.dshnc.logic.VoiceTake.rejectReason(Double.NaN, 20_000))
     }
 }
+
+/**
+ * What the screen shows for one line, and what it says: a dump is read, a sentence is heard.
+ */
+class VoiceChatRenderTest {
+    @Test
+    fun `the spoken text wins over the displayed one` () {
+        assertEquals("Свет включил.", ru.uvw.dshnc.logic.VoiceChat.speechText("$ ls -la …", "Свет включил."))
+        assertEquals("показать", ru.uvw.dshnc.logic.VoiceChat.speechText("показать", ""))
+        assertEquals("показать", ru.uvw.dshnc.logic.VoiceChat.speechText("показать", null))
+    }
+
+    @Test
+    fun `code fences disappear and their content is marked as code` () {
+        val text = "Вот вывод:\n```bash\nls -la\ntotal 0\n```\nи всё."
+        val segments = ru.uvw.dshnc.logic.VoiceChat.segments(text)
+        assertEquals(3, segments.size)
+        assertEquals(false, segments[0].code)
+        assertEquals(true, segments[1].code)
+        assertEquals("ls -la\ntotal 0", segments[1].text)
+        assertEquals(false, segments[2].code)
+        // no marker survives anywhere, in any segment
+        assertTrue(segments.none { it.text.contains("```") })
+    }
+
+    @Test
+    fun `an unclosed fence still renders as code` () {
+        val segments = ru.uvw.dshnc.logic.VoiceChat.segments("до\n```\nбез конца")
+        assertEquals(listOf(false, true), segments.map { it.code })
+        assertEquals("без конца", segments[1].text)
+    }
+
+    @Test
+    fun `plain text is one prose segment` () {
+        val segments = ru.uvw.dshnc.logic.VoiceChat.segments("Привет.\nКак дела?")
+        assertEquals(1, segments.size)
+        assertEquals("Привет.\nКак дела?", segments[0].text)
+    }
+}
+
+/**
+ * Captions and step counts: the receipt belongs to the take, the steps belong to the answer.
+ */
+class VoiceChatCaptionTest {
+    @Test
+    fun `the receipt is dropped once the transcript arrives` () {
+        val log = ru.uvw.dshnc.logic.VoiceChatLog()
+        log.recording("e-1", "вы · 1.5 с")
+        assertTrue(log.note("e-1", "принято хостом · 1.5 с"))
+        assertEquals("принято хостом · 1.5 с", log.snapshot().single().note)
+        log.put("e-1", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "включи свет")
+        assertEquals(null, log.snapshot().single().note)
+    }
+
+    @Test
+    fun `a receipt for a transcript that already came is not added` () {
+        val log = ru.uvw.dshnc.logic.VoiceChatLog()
+        log.recording("e-2", "вы · 1.5 с")
+        log.put("e-2", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "включи свет")
+        assertEquals(false, log.note("e-2", "принято хостом · 1.5 с"))
+        assertEquals(null, log.snapshot().single().note)
+    }
+
+    @Test
+    fun `steps ride on the answer and are forgotten with it` () {
+        val log = ru.uvw.dshnc.logic.VoiceChatLog()
+        log.recording("e-3", "вы · 2.0 с")
+        log.put("e-3", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "который час")
+        log.countStep("e-3")
+        log.put("e-3", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "Половина шестого.")
+        val answer = log.snapshot().last()
+        assertEquals(1, answer.steps)
+        // the counter is not history: another answer for the same exchange starts from zero
+        log.put("e-3", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "И ещё: полшестого.")
+        assertEquals(null, log.snapshot().last().steps)
+    }
+
+    @Test
+    fun `an answer with no steps carries no caption` () {
+        val log = ru.uvw.dshnc.logic.VoiceChatLog()
+        log.put("e-4", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "просто ответ")
+        assertEquals(null, log.snapshot().single().steps)
+    }
+}

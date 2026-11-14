@@ -133,6 +133,9 @@ class VoiceApi (private val context: Context) {
             .put("say", JSONObject()
                 .put("type", "boolean")
                 .put("description", "assistant only: voice this line on the phone"))
+            .put("speak", JSONObject()
+                .put("type", "string")
+                .put("description", "What to say out loud when it differs from text, e.g. a summary of a dump"))
             .put("audio", JSONObject()
                 .put("type", "string")
                 .put("description", "A synthesized file on the host to play instead of the system engine")))
@@ -377,18 +380,23 @@ class VoiceApi (private val context: Context) {
         }
         val id = args.optString("id").trim()
         val text = VoiceChat.clip(raw)
+        // what to show and what to say are two different things: a command dump is displayed, a
+        // short sentence is spoken
+        val speak = args.optString("speak")
+        val spokenText = VoiceChat.speechText(text, speak)
         val say = role == VoiceChat.Role.ASSISTANT && args.optBoolean("say", false)
         val audio = args.optString("audio").trim().takeIf { it.isNotEmpty() }
         // the command answers here and now: drawing belongs to the screen, speech to its own queue
         VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text))
         if (say || audio != null) {
-            speaker.submit(VoiceSpeaker.Task(id = id, text = text, audio = audio, seq = seq))
+            speaker.submit(VoiceSpeaker.Task(id = id, text = spokenText, audio = audio, seq = seq))
         }
         events.addEvent(
             "chat " + if (role == VoiceChat.Role.USER) "user" else "assistant",
             buildString {
                 append("${text.length} симв")
                 if (say) append(" say=1")
+                if (speak.isNotBlank() && speak != text) append(" speak=${speak.length} симв")
                 if (audio != null) append(" audio=$audio")
                 if (id.isNotEmpty()) append(" id=$id")
             },

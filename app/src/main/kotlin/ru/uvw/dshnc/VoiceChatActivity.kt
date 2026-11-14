@@ -335,7 +335,12 @@ class VoiceChatActivity : AppCompatActivity() {
                 when (outcome) {
                     is VoiceUpload.Result.Accepted -> {
                         runCatching { take.file.delete() }
-                        setState("принято хостом · ${"%.1f".format(outcome.seconds ?: take.seconds)} с")
+                        // the receipt belongs to the take: a caption under «вы», and it disappears
+                        // as soon as the transcript makes it pointless
+                        val caption = "принято хостом · ${"%.1f".format(outcome.seconds ?: take.seconds)} с"
+                        val shown = VoiceChatBus.note(id, caption)
+                        setState(if (shown) "отправлено" else "готов")
+                        renderChat()
                         show(outcome.path?.let { "на хосте: $it" } ?: "принято")
                     }
                     is VoiceUpload.Result.Failed -> refuse(take, outcome.reason)
@@ -398,6 +403,7 @@ class VoiceChatActivity : AppCompatActivity() {
                     }
                 }
                 is VoiceInbox.Item.Activity -> {
+                    VoiceChatBus.countStep(item.id)
                     progressExchange = item.id.ifEmpty { progressExchange }
                     progressLine.text = "${item.n}. ${item.name.ifEmpty { "…" }}"
                     progressLine.visibility = View.VISIBLE
@@ -428,8 +434,8 @@ class VoiceChatActivity : AppCompatActivity() {
         scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
 
-    /** One line: the person flush left, the answer indented, service notes small and grey. */
-    private fun view (entry: VoiceChatLog.Entry): TextView {
+    /** One line: the person flush left, the answer indented, captions small and grey. */
+    private fun view (entry: VoiceChatLog.Entry): View {
         val density = resources.displayMetrics.density
         val indent = when (entry.role) {
             // the answer sits as the other speaker: indented, slightly quieter
@@ -445,11 +451,43 @@ class VoiceChatActivity : AppCompatActivity() {
             VoiceChat.Role.ASSISTANT -> Color.parseColor("#e5e7eb")
             VoiceChat.Role.SYSTEM -> Color.parseColor("#6b7280")
         }
-        return TextView(this).apply {
-            text = entry.text
-            textSize = size
-            setTextColor(color)
+        val block = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(indent, (4 * density).toInt(), 0, (4 * density).toInt())
+        }
+        // prose is drawn as it came; fenced runs are monospaced on a grey field, markers gone
+        for (segment in VoiceChat.segments(entry.text)) {
+            block.addView(TextView(this).apply {
+                text = segment.text
+                textSize = size
+                setTextColor(color)
+                if (segment.code) {
+                    typeface = android.graphics.Typeface.MONOSPACE
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, size - 3f)
+                    setBackgroundColor(Color.parseColor("#1f2937"))
+                    setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
+                }
+            })
+        }
+        // a caption under the person's line: how the host took the take
+        entry.note?.let { note ->
+            block.addView(caption(note))
+        }
+        // and one under the answer: how much work it took, so a passing cadence is at least counted
+        entry.steps?.takeIf { it > 0 }?.let { count ->
+            block.addView(caption("шагов: $count"))
+        }
+        return block
+    }
+
+    /** A small grey line under a remark: a caption, never a remark of its own. */
+    private fun caption (text: String): TextView {
+        val density = resources.displayMetrics.density
+        return TextView(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(Color.parseColor("#6b7280"))
+            setPadding(0, (2 * density).toInt(), 0, 0)
         }
     }
 
