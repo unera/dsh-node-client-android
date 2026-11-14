@@ -20,9 +20,12 @@ import ru.uvw.dshnc.api.NodeApi
 import ru.uvw.dshnc.logic.Recorder
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.api.VoiceEvents
+import ru.uvw.dshnc.logic.VoiceBubble
 import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatUi
 import ru.uvw.dshnc.logic.VoiceMenu
+import ru.uvw.dshnc.logic.VoiceSession
+import ru.uvw.dshnc.logic.VoiceStatus
 import ru.uvw.dshnc.logic.VoiceTimer
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
@@ -51,7 +54,6 @@ class VoiceChatActivity : AppCompatActivity() {
     private lateinit var recorder: Recorder
     private lateinit var chat: LinearLayout
     /** The line that says what the microphone is doing: «слушаю» then «отправлено хосту». */
-    private lateinit var stateLine: TextView
     /** One line for the model's current step: it replaces the previous step, it does not pile up. */
     private lateinit var progressLine: TextView
     /** The exchange whose steps are being shown: its answer clears the line. */
@@ -60,9 +62,12 @@ class VoiceChatActivity : AppCompatActivity() {
     private lateinit var meter: ProgressBar
     private lateinit var hint: TextView
     private lateinit var talk: TextView
-    private lateinit var cancel: TextView
     /** The clock on the record button: `0:07 / 0:30`. */
     private lateinit var timerLine: TextView
+    /** The screen title: it carries the assistant's name once the host says who answers. */
+    private lateinit var title: TextView
+    /** Who answers, as the host last said: the header uses it once there is a line to introduce. */
+    private var assistantWho: VoiceChat.Whom? = null
     /** The menu, while it is open: dismissed from the rows themselves. */
     private var popup: android.widget.PopupWindow? = null
     /** The screen's own small decisions: the hint and the mode, testable without a device. */
@@ -76,6 +81,8 @@ class VoiceChatActivity : AppCompatActivity() {
     private var recordStartedAt = 0L
     /** True while the screen considers a take to be running, including the auto-stop moment. */
     private var recording = false
+    /** The last outcome, shown in the fixed status line until the person does something new. */
+    private var status: String? = null
 
     private val permissionRequest = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
@@ -108,6 +115,7 @@ class VoiceChatActivity : AppCompatActivity() {
         root.setPadding(0, 0, 0, 0)
         // the habits live in this menu now: on the screen the squares were in the way
         val header = root.getChildAt(0) as LinearLayout
+        title = header.getChildAt(header.childCount - 1) as TextView
         header.addView(android.view.View(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
         })
@@ -128,12 +136,6 @@ class VoiceChatActivity : AppCompatActivity() {
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, (8 * density).toInt(), pad, (8 * density).toInt())
-        }
-        stateLine = TextView(this).apply {
-            textSize = 18f
-            setTextColor(Color.parseColor("#93c5fd"))
-            setPadding(0, (6 * density).toInt(), 0, 0)
-            visibility = View.GONE
         }
         progressLine = TextView(this).apply {
             textSize = 15f
@@ -220,21 +222,6 @@ class VoiceChatActivity : AppCompatActivity() {
         stage.addView(timerLine)
         root.addView(stage)
 
-        cancel = TextView(this).apply {
-            text = "отмена"
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#f87171"))
-            visibility = View.GONE
-            setOnClickListener {
-                holding = false
-                recorder.cancel()
-                renderIdle()
-                show("запись отменена")
-            }
-        }
-        root.addView(cancel)
-
         talk.setOnTouchListener { _, event ->
             when (mode) {
                 VoiceMode.PTT -> {
@@ -268,6 +255,7 @@ class VoiceChatActivity : AppCompatActivity() {
         if (!ui.selectMode(next)) return
         mode = ui.mode
         store.voiceMode = mode.wire
+        status = null
         refreshHint(0.0)
     }
 
@@ -355,42 +343,61 @@ class VoiceChatActivity : AppCompatActivity() {
         val base = store.base
         val token = store.token
         if (base == null || token == null) {
-            addLine("хост не ответил")
+            addLine(VoiceSession.NO_ANSWER)
             return
         }
         Thread({
-            val ok = runCatching {
-                NodeApi(base).sendEvent(token, org.json.JSONObject()
-                    .put("type", "voice")
-                    .put("action", "new-session"))
-                true
-            }.getOrDefault(false)
+            val outcome = VoiceEvents(base, token).newSession()
             runOnUiThread {
-                if (!ok) {
-                    addLine("хост не ответил")
-                    return@runOnUiThread
+                when (outcome) {
+                    is VoiceSession.Result.Accepted -> {
+                        VoiceInbox.clear()
+                        VoiceChatBus.clear()
+                        hideProgress()
+                        addLine("новая сессия")
+                    }
+                    // the server's own words, not a shrug: the reason has to be readable on screen
+                    is VoiceSession.Result.Failed -> addLine(outcome.reason)
                 }
-                VoiceInbox.clear()
-                VoiceChatBus.clear()
-                hideProgress()
-                addLine("новая сессия")
             }
         }, "dshnc-voice-session").start()
     }
 
-    /** The line above the button: the habit, or the clock while a take is running. */
-    private fun refreshHint (seconds: Double) {
-        hint.text = ui.hint(recorder.isRecording, seconds)
+    /**
+     * The line above the button: the habit, the clock, or the last outcome.
+     *
+     * A status («принято хостом», «слишком коротко») stays until the person starts a new take or
+     * picks another habit: replacing it at once with the habit hint made it flash and vanish.
+     */
+    /**
+     * Redraw the header.
+     *
+     * An empty conversation shows the name of the screen; once there is a line and the host has said
+     * who answers, the header becomes that assistant — an emoji and a name, large.
+     */
+    private fun refreshTitle () {
+        title.text = VoiceChat.title(assistantWho, VoiceChatBus.snapshot().isNotEmpty())
     }
 
-    /** One line in the conversation for the microphone's state; the newest state wins. */
+    private fun refreshHint (seconds: Double) {
+        if (recorder.isRecording) {
+            hint.text = ui.hint(recording = true, seconds = seconds)
+            return
+        }
+        if (status != null) return
+        hint.text = ui.hint(recording = false)
+    }
+
+    /**
+     * The status, in the one place it lives: the fixed line above the level bar.
+     *
+     * It used to be a view inside the conversation, so it wandered with the text and could appear
+     * after the answer instead of above the button. There is exactly one such line now, and it is
+     * outside the scrolling area.
+     */
     private fun setState (text: String) {
-        stateLine.text = text
-        stateLine.visibility = View.VISIBLE
-        // the state line always sits at the bottom of the conversation: remove and re-add
-        (stateLine.parent as? LinearLayout)?.removeView(stateLine)
-        chat.addView(stateLine)
-        scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
+        status = text
+        hint.text = text
     }
 
     private fun startRecording () {
@@ -408,11 +415,11 @@ class VoiceChatActivity : AppCompatActivity() {
         }
         recordStartedAt = System.currentTimeMillis()
         recording = true
+        status = null
         talk.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.parseColor("#dc2626"))
         }
-        cancel.visibility = View.VISIBLE
         refreshHint(0.0)
         setState("слушаю")
         show("говорите")
@@ -423,7 +430,6 @@ class VoiceChatActivity : AppCompatActivity() {
 
     private fun stopRecording () {
         recording = false
-        cancel.visibility = View.GONE
         timerLine.visibility = View.GONE
         val take = recorder.stop()
         if (take == null) {
@@ -482,11 +488,13 @@ class VoiceChatActivity : AppCompatActivity() {
                         runCatching { take.file.delete() }
                         // the receipt belongs to the take: a caption under «вы», and it disappears
                         // as soon as the transcript makes it pointless
-                        val caption = "принято хостом · ${"%.1f".format(outcome.seconds ?: take.seconds)} с"
+                        val caption = VoiceStatus.accepted(outcome.seconds ?: take.seconds)
                         val shown = VoiceChatBus.note(id, caption)
                         setState(if (shown) "отправлено" else "готов")
                         renderChat()
-                        show(outcome.path?.let { "на хосте: $it" } ?: "принято")
+                        // the path is for the log, never for the screen
+                        store.addEvent("voice принято", VoiceStatus.logDetails(caption, outcome.path))
+                        show(caption)
                     }
                     is VoiceUpload.Result.Failed -> refuse(take, outcome.reason)
                 }
@@ -507,7 +515,9 @@ class VoiceChatActivity : AppCompatActivity() {
         }.getOrElse { take.file }
         VoiceOutbox.offer(VoiceOutbox.Recording(parked, take.seconds, mode.wire))
         addLine(VoiceUpload.REFUSED_LINE)
-        show("$reason · ${parked.absolutePath}")
+        // the path stays in the log: on screen it read like a fault
+        store.addEvent("voice не принято", VoiceStatus.logDetails(reason, parked.absolutePath))
+        show(VoiceStatus.refused(reason))
         setState("хост не принял, сохранено локально")
     }
 
@@ -535,7 +545,13 @@ class VoiceChatActivity : AppCompatActivity() {
         for (item in items) {
             when (item) {
                 is VoiceInbox.Item.Chat -> {
-                    VoiceChatBus.putQuiet(item.id, item.role, item.text)
+                    VoiceChatBus.putQuiet(item.id, item.role, item.text, item.who?.name)
+                    item.who?.let { who ->
+                        if (who != assistantWho) {
+                            assistantWho = who
+                            refreshTitle()
+                        }
+                    }
                     // the answer ends the work: the progress line has nothing left to report
                     if (item.role == VoiceChat.Role.ASSISTANT && (item.id.isEmpty() || item.id == progressExchange)) {
                         hideProgress()
@@ -567,56 +583,86 @@ class VoiceChatActivity : AppCompatActivity() {
      */
     private fun renderChat () {
         chat.removeAllViews()
-        for (entry in VoiceChatBus.snapshot()) chat.addView(view(entry))
+        var previousId: String? = null
+        for (entry in VoiceChatBus.snapshot()) {
+            chat.addView(view(entry, previousId))
+            previousId = entry.id
+        }
         if (progressLine.visibility == View.VISIBLE) {
             (progressLine.parent as? android.view.ViewGroup)?.removeView(progressLine)
             chat.addView(progressLine)
         }
-        (stateLine.parent as? android.view.ViewGroup)?.removeView(stateLine)
-        chat.addView(stateLine)
+        refreshTitle()
         scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
 
-    /** One line: the person flush left, the answer indented, captions small and grey. */
-    private fun view (entry: VoiceChatLog.Entry): View {
+    /**
+     * One line of the conversation: a blue bubble on the right for the person, a dark one on the
+     * left for the answer, and nothing but small grey text for the screen's own notes.
+     */
+    private fun view (entry: VoiceChatLog.Entry, previousId: String?): View {
         val density = resources.displayMetrics.density
-        val indent = when (entry.role) {
-            // the answer sits as the other speaker: indented, slightly quieter
-            VoiceChat.Role.ASSISTANT -> (28 * density).toInt()
-            else -> 0
+        val bubbleMaxWidth = VoiceBubble.maxWidthPx(resources.displayMetrics.widthPixels)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = when (VoiceBubble.alignment(entry.role)) {
+                "end" -> Gravity.END
+                else -> Gravity.START
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = (VoiceBubble.gapDp(previousId, entry.id) * density).toInt() }
         }
-        val size = when (entry.role) {
-            VoiceChat.Role.SYSTEM -> 13f
-            else -> 20f
-        }
-        val color = when (entry.role) {
-            VoiceChat.Role.USER -> Color.WHITE
-            VoiceChat.Role.ASSISTANT -> Color.parseColor("#e5e7eb")
-            VoiceChat.Role.SYSTEM -> Color.parseColor("#6b7280")
-        }
-        val block = LinearLayout(this).apply {
+
+        val bubble = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(indent, (4 * density).toInt(), 0, (4 * density).toInt())
+            if (entry.role != VoiceChat.Role.SYSTEM) {
+                setPadding(
+                    (VoiceBubble.PADDING_H_DP * density).toInt(),
+                    (VoiceBubble.PADDING_V_DP * density).toInt(),
+                    (VoiceBubble.PADDING_H_DP * density).toInt(),
+                    (VoiceBubble.PADDING_V_DP * density).toInt(),
+                )
+                VoiceBubble.background(entry.role)?.let { color ->
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = VoiceBubble.RADIUS_DP * density
+                        setColor(Color.parseColor(color))
+                    }
+                }
+            } else {
+                setPadding(0, 0, 0, 0)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
         }
-        // prose is drawn as it came; fenced runs are monospaced on a grey field, markers gone
+
+        val size = if (entry.role == VoiceChat.Role.SYSTEM) 13f else 18f
+        val color = Color.parseColor(VoiceBubble.textColor(entry.role))
+        // prose is drawn as it came; fenced runs are monospaced on a field darker than the bubble
         for (segment in VoiceChat.segments(entry.text)) {
-            block.addView(TextView(this).apply {
+            bubble.addView(TextView(this).apply {
                 text = segment.text
                 textSize = size
                 setTextColor(color)
+                maxWidth = bubbleMaxWidth
                 if (segment.code) {
                     typeface = android.graphics.Typeface.MONOSPACE
                     setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, size - 3f)
-                    setBackgroundColor(Color.parseColor("#1f2937"))
-                    setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
+                    setBackgroundColor(Color.parseColor(VoiceBubble.CODE_BACKGROUND))
+                    setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
                 }
             })
         }
-        // a caption under the person's line: how the host took the take
-        entry.note?.let { note -> block.addView(caption(note)) }
-        // and one under the answer: how much work it took, so a passing cadence is at least counted
-        entry.steps?.takeIf { it > 0 }?.let { count -> block.addView(caption("шагов: $count")) }
-        return block
+        // captions live inside the bubble: they belong to the remark above them
+        entry.note?.let { note -> bubble.addView(caption(note)) }
+        entry.steps?.takeIf { it > 0 }?.let { count -> bubble.addView(caption("шагов: $count")) }
+
+        row.addView(bubble)
+        return row
     }
 
     /** A small grey line under a remark: a caption, never a remark of its own. */
@@ -637,6 +683,7 @@ class VoiceChatActivity : AppCompatActivity() {
     }
 
     private fun show (text: String) {
+        status = text
         hint.text = text
     }
 

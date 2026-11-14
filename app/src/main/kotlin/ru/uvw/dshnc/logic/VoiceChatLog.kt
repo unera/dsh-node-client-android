@@ -84,6 +84,26 @@ object VoiceChat {
             .filter { it.text.isNotBlank() }
     }
 
+    /** Who answers: a name and, when the host has one, an emoji. */
+    data class Whom (val name: String, val icon: String? = null)
+
+    /**
+     * The screen title.
+     *
+     * An empty conversation keeps the plain name of the screen — there is nothing to introduce yet.
+     * Once a line exists and the host has said who answers, the header becomes that assistant: an
+     * emoji and a name, large, instead of a description of the screen.
+     *
+     * @param who who answers, when the host has told us.
+     * @param hasLines whether the conversation has at least one line.
+     */
+    fun title (who: Whom?, hasLines: Boolean): String {
+        val name = who?.name?.trim().orEmpty()
+        if (!hasLines || name.isEmpty()) return "Голосовой чат"
+        val icon = who?.icon?.trim().orEmpty()
+        return if (icon.isEmpty()) name else "$icon $name"
+    }
+
     /** Cut an overlong text, marking the cut so nobody thinks the sentence ended there. */
     fun clip (text: String): String {
         val trimmed = text.trim()
@@ -108,6 +128,8 @@ class VoiceChatLog (private val limit: Int = 200) {
         val note: String? = null,
         /** How many steps the answer took; null when there were none to mention. */
         val steps: Int? = null,
+        /** The assistant's name, on the first answer of an exchange only. */
+        val who: String? = null,
     )
 
     /** What a write did, so the screen knows how much to redraw. */
@@ -134,7 +156,7 @@ class VoiceChatLog (private val limit: Int = 200) {
      * @param text already clipped text.
      * @returns `REPLACED` when a placeholder became the transcript, `ADDED` otherwise.
      */
-    fun put (id: String, role: VoiceChat.Role, text: String): Change {
+    fun put (id: String, role: VoiceChat.Role, text: String, who: String? = null): Change {
         if (role == VoiceChat.Role.USER) {
             val index = items.indexOfLast { it.id == id && it.placeholder }
             if (index >= 0) {
@@ -148,7 +170,14 @@ class VoiceChatLog (private val limit: Int = 200) {
         val duplicate = items.any { it.id == id && it.role == role && it.text == text }
         if (duplicate) return Change.IGNORED
         val count = if (role == VoiceChat.Role.ASSISTANT) steps.remove(id) else null
-        items.add(Entry(id, role, text, placeholder = false, steps = count))
+        // the name is worth saying once per exchange: repeating it before every paragraph is noise
+        val name = when {
+            role != VoiceChat.Role.ASSISTANT -> null
+            who.isNullOrBlank() -> null
+            items.any { it.id == id && it.role == VoiceChat.Role.ASSISTANT } -> null
+            else -> who.trim()
+        }
+        items.add(Entry(id, role, text, placeholder = false, steps = count, who = name))
         trim()
         return Change.ADDED
     }

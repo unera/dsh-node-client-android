@@ -133,6 +133,12 @@ class VoiceApi (private val context: Context) {
             .put("say", JSONObject()
                 .put("type", "boolean")
                 .put("description", "assistant only: voice this line on the phone"))
+            .put("who", JSONObject()
+                .put("type", "object")
+                .put("description", "Who answers: {name, icon?}. Shown in the header once the conversation has a line")
+                .put("properties", JSONObject()
+                    .put("name", JSONObject().put("type", "string"))
+                    .put("icon", JSONObject().put("type", "string").put("description", "An emoji, optional"))))
             .put("speak", JSONObject()
                 .put("type", "string")
                 .put("description", "What to say out loud when it differs from text, e.g. a summary of a dump"))
@@ -387,7 +393,16 @@ class VoiceApi (private val context: Context) {
         val say = role == VoiceChat.Role.ASSISTANT && args.optBoolean("say", false)
         val audio = args.optString("audio").trim().takeIf { it.isNotEmpty() }
         // the command answers here and now: drawing belongs to the screen, speech to its own queue
-        VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text))
+        // who answers: an object with a name and an optional emoji; a bare string still works
+        val whoArg = args.opt("who")
+        val who = when (whoArg) {
+            is JSONObject -> whoArg.optString("name").trim()
+                .takeIf { it.isNotEmpty() }
+                ?.let { name -> VoiceChat.Whom(name, whoArg.optString("icon").trim().takeIf { it.isNotEmpty() }) }
+            is String -> whoArg.trim().takeIf { it.isNotEmpty() }?.let { VoiceChat.Whom(it) }
+            else -> null
+        }
+        VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text, who))
         if (say || audio != null) {
             speaker.submit(VoiceSpeaker.Task(id = id, text = spokenText, audio = audio, seq = seq))
         }

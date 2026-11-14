@@ -5,6 +5,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import ru.uvw.dshnc.logic.VoiceMode
+import ru.uvw.dshnc.logic.VoiceSession
 import ru.uvw.dshnc.logic.VoiceUpload
 import ru.uvw.dshnc.logic.VoiceWant
 import java.io.File
@@ -64,6 +65,29 @@ class VoiceEvents (private val base: String, private val token: String) {
             // an unreachable host is not a refusal of the recording: the take stays on the phone
             VoiceUpload.Result.Failed(error.message ?: error.javaClass.simpleName)
         }
+    }
+
+    /**
+     * Ask the host to start a new conversation.
+     *
+     * The refusal is passed on in the server's own words: a generic "no answer" once hid a
+     * `bad_type` that said exactly what was wrong with the request.
+     *
+     * @returns acceptance, or the reason it did not land; never throws.
+     */
+    fun newSession (): VoiceSession.Result = try {
+        NodeApi(base).sendEvent(token, VoiceSession.body())
+        VoiceSession.Result.Accepted
+    } catch (error: ApiException) {
+        val words = listOfNotNull(
+            error.message.takeIf { it.isNotBlank() },
+            error.code?.let { "($it)" },
+        ).joinToString(" ")
+        VoiceSession.Result.Failed(words.ifBlank { VoiceSession.interpret(error.status, null).let { result ->
+            (result as? VoiceSession.Result.Failed)?.reason ?: VoiceSession.NO_ANSWER
+        } })
+    } catch (error: Throwable) {
+        VoiceSession.Result.Failed(error.message ?: VoiceSession.NO_ANSWER)
     }
 
     /**

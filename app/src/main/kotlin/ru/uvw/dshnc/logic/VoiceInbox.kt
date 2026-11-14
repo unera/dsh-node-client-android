@@ -21,6 +21,8 @@ object VoiceInbox {
             val id: String,
             val role: VoiceChat.Role,
             val text: String,
+            /** Who answers, when the host sent it with the line. */
+            val who: VoiceChat.Whom? = null,
         ) : Item()
 
         /** A step of the model's work: shown in one line that replaces the previous one. */

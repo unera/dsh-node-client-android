@@ -24,12 +24,12 @@ object VoiceChatBus {
     }
 
     /** A line that arrived from the host: stored without waking the screen, which drains its own queue. */
-    fun putQuiet (id: String, role: VoiceChat.Role, text: String): VoiceChatLog.Change =
-        synchronized(lock) { log.put(id, role, text) }
+    fun putQuiet (id: String, role: VoiceChat.Role, text: String, who: String? = null): VoiceChatLog.Change =
+        synchronized(lock) { log.put(id, role, text, who) }
 
     /** A line from the host: the transcript of a take, or the answer. */
-    fun put (id: String, role: VoiceChat.Role, text: String): VoiceChatLog.Change {
-        val change = synchronized(lock) { log.put(id, role, text) }
+    fun put (id: String, role: VoiceChat.Role, text: String, who: String? = null): VoiceChatLog.Change {
+        val change = synchronized(lock) { log.put(id, role, text, who) }
         if (change != VoiceChatLog.Change.IGNORED) onChanged?.invoke()
         return change
     }

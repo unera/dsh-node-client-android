@@ -1,6 +1,7 @@
 package ru.uvw.dshnc
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -186,6 +187,271 @@ class VoiceRecordButtonTest {
             assertEquals((lp.width * 0.6).toInt(), lp.height)
         } finally {
             activity.finish()
+        }
+    }
+}
+
+/**
+ * The new-conversation event: one word of type, and the server's own words when it refuses.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceSessionTest {
+    @Test
+    fun `the body is exactly the new-session type`() {
+        val body = ru.uvw.dshnc.logic.VoiceSession.body()
+        assertEquals("{\"type\":\"new-session\"}", body.toString())
+        assertEquals(1, body.length())
+        assertEquals(null, body.opt("action"))
+    }
+
+    @Test
+    fun `a refusal keeps the server's words`() {
+        val result = ru.uvw.dshnc.logic.VoiceSession.interpret(
+            400,
+            "{\"code\":\"bad_type\",\"message\":\"voice принимается только на /v1/upload-file\"}",
+        )
+        assertTrue(result is ru.uvw.dshnc.logic.VoiceSession.Result.Failed)
+        assertEquals(
+            "voice принимается только на /v1/upload-file (bad_type)",
+            (result as ru.uvw.dshnc.logic.VoiceSession.Result.Failed).reason,
+        )
+    }
+
+    @Test
+    fun `an accepted answer and a silent one`() {
+        assertTrue(ru.uvw.dshnc.logic.VoiceSession.interpret(202, "") is ru.uvw.dshnc.logic.VoiceSession.Result.Accepted)
+        assertTrue(ru.uvw.dshnc.logic.VoiceSession.interpret(200, null) is ru.uvw.dshnc.logic.VoiceSession.Result.Accepted)
+        val silent = ru.uvw.dshnc.logic.VoiceSession.interpret(502, "<html/>")
+        assertEquals("HTTP 502", (silent as ru.uvw.dshnc.logic.VoiceSession.Result.Failed).reason)
+    }
+}
+
+/**
+ * What is no longer on the screen: the cancel button, and any lift of the record button.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceScreenShapeTest {
+    private fun activity(): VoiceChatActivity =
+        org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+
+    @Test
+    fun `there is no cancel button in the layout`() {
+        val screen = activity()
+        try {
+            val texts = mutableListOf<String>()
+            fun walk (view: android.view.View) {
+                if (view is android.widget.TextView) texts.add(view.text?.toString().orEmpty())
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            assertTrue("отмены быть не должно: $texts", texts.none { it.equals("отмена", ignoreCase = true) })
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `nothing is lifted off its place`() {
+        val screen = activity()
+        try {
+            var shifted = 0
+            fun walk (view: android.view.View) {
+                if (view.translationY != 0f || view.translationX != 0f) shifted += 1
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            // the button used to rise under the finger; nothing shifts any more
+            assertEquals(0, shifted)
+        } finally {
+            screen.finish()
+        }
+    }
+}
+
+/**
+ * What a person reads under the conversation: what happened, never where a file lies.
+ */
+class VoiceStatusTest {
+    @Test
+    fun `an accepted take shows its duration and no destination`() {
+        val line = ru.uvw.dshnc.logic.VoiceStatus.accepted(1.5)
+        assertEquals("принято хостом · 1.5 с", line)
+        assertFalse(line.contains("/"))
+        assertFalse(line.contains("на хосте"))
+    }
+
+    @Test
+    fun `a refusal keeps the server's words but loses any path in them`() {
+        val line = ru.uvw.dshnc.logic.VoiceStatus.refused(
+            "файл не скачался: /home/dsh/work/ai/.dsh/cache/voice/a.wav (voice_failed)",
+        )
+        assertEquals("хост не принял: файл не скачался: (voice_failed)", line)
+        assertFalse(line.contains("/"))
+    }
+
+    @Test
+    fun `the device log is where the path still goes`() {
+        val path = "/home/dsh/work/ai/.dsh/cache/voice/incoming/<uuid>.wav"
+        val details = ru.uvw.dshnc.logic.VoiceStatus.logDetails("принято хостом · 1.5 с", path)
+        assertTrue(details.contains(path))
+        // and nothing else was swallowed on the way
+        assertTrue(details.startsWith("принято хостом · 1.5 с"))
+        assertEquals("принято", ru.uvw.dshnc.logic.VoiceStatus.logDetails("принято", null))
+    }
+
+    @Test
+    fun `a refusal with only a path left still says something`() {
+        assertEquals("хост не принял", ru.uvw.dshnc.logic.VoiceStatus.refused("/tmp/a.wav"))
+    }
+}
+
+/**
+ * The look of a line: two different bubbles, the sides they stick to, and the width cap.
+ */
+class VoiceBubbleTest {
+    @Test
+    fun `the person and the answer have different bubbles`() {
+        val user = ru.uvw.dshnc.logic.VoiceBubble.background(ru.uvw.dshnc.logic.VoiceChat.Role.USER)
+        val answer = ru.uvw.dshnc.logic.VoiceBubble.background(ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT)
+        assertEquals("#2563eb", user)
+        assertEquals("#1f2937", answer)
+        assertFalse(user == answer)
+        // a service note has no bubble at all
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceBubble.background(ru.uvw.dshnc.logic.VoiceChat.Role.SYSTEM))
+    }
+
+    @Test
+    fun `the text colour matches its bubble`() {
+        assertEquals("#ffffff", ru.uvw.dshnc.logic.VoiceBubble.textColor(ru.uvw.dshnc.logic.VoiceChat.Role.USER))
+        assertEquals("#e5e7eb", ru.uvw.dshnc.logic.VoiceBubble.textColor(ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT))
+        assertEquals("#6b7280", ru.uvw.dshnc.logic.VoiceBubble.textColor(ru.uvw.dshnc.logic.VoiceChat.Role.SYSTEM))
+    }
+
+    @Test
+    fun `the person is on the right and the answer on the left`() {
+        assertEquals("end", ru.uvw.dshnc.logic.VoiceBubble.alignment(ru.uvw.dshnc.logic.VoiceChat.Role.USER))
+        assertEquals("start", ru.uvw.dshnc.logic.VoiceBubble.alignment(ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT))
+    }
+
+    @Test
+    fun `a bubble never takes the whole screen`() {
+        assertEquals(850, ru.uvw.dshnc.logic.VoiceBubble.maxWidthPx(1000))
+        assertEquals(0.85, ru.uvw.dshnc.logic.VoiceBubble.MAX_WIDTH_FRACTION, 0.0001)
+        assertTrue(ru.uvw.dshnc.logic.VoiceBubble.maxWidthPx(1080) < 1080)
+    }
+
+    @Test
+    fun `the gap is small inside an exchange and wide between them`() {
+        assertEquals(8, ru.uvw.dshnc.logic.VoiceBubble.gapDp("a", "a"))
+        assertEquals(16, ru.uvw.dshnc.logic.VoiceBubble.gapDp("a", "b"))
+        assertEquals(16, ru.uvw.dshnc.logic.VoiceBubble.gapDp(null, "a"))
+        // the code field inside a bubble is darker than the bubble itself
+        assertEquals("#111827", ru.uvw.dshnc.logic.VoiceBubble.CODE_BACKGROUND)
+    }
+}
+
+/**
+ * The status line stands in one place: the fixed bottom block, above the level bar, outside the
+ * scrolling conversation.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceStatusPlaceTest {
+    private fun activity(): VoiceChatActivity =
+        org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+
+    @Test
+    fun `the status sits directly above the level bar and outside the conversation`() {
+        val screen = activity()
+        try {
+            val content = screen.findViewById<android.view.ViewGroup>(android.R.id.content)
+            var status: android.widget.TextView? = null
+            var bar: android.widget.ProgressBar? = null
+            var scroller: android.widget.ScrollView? = null
+            fun walk (view: android.view.View) {
+                when (view) {
+                    is android.widget.ProgressBar -> bar = view
+                    is android.widget.ScrollView -> scroller = view
+                }
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(content)
+            // the status label is the small one just above the bar, inside the same bottom block
+            assertNotNull(bar)
+            assertNotNull(scroller)
+            val bottom = bar!!.parent as android.view.ViewGroup
+            assertTrue("the bar must not live inside the conversation", bottom !== scroller)
+            val texts = (0 until bottom.childCount).mapNotNull { index ->
+                val child = bottom.getChildAt(index)
+                if (child is android.widget.TextView) child else null
+            }
+            status = texts.firstOrNull { it.textSize <= 24f }
+            assertNotNull("the status line must be in the bottom block", status)
+            assertTrue("it stands above the bar", bottom.indexOfChild(status!!) < bottom.indexOfChild(bar!!))
+        } finally {
+            screen.finish()
+        }
+    }
+}
+
+/**
+ * The header: the name of the screen while it is empty, the assistant once it answers.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceWhoTest {
+    private val kesha = ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦆")
+
+    @Test
+    fun `an empty conversation keeps the plain title`() {
+        assertEquals("Голосовой чат", ru.uvw.dshnc.logic.VoiceChat.title(kesha, hasLines = false))
+        assertEquals("Голосовой чат", ru.uvw.dshnc.logic.VoiceChat.title(null, hasLines = false))
+    }
+
+    @Test
+    fun `a line plus a name becomes the assistant in the header`() {
+        assertEquals("🦆 Кеша", ru.uvw.dshnc.logic.VoiceChat.title(kesha, hasLines = true))
+    }
+
+    @Test
+    fun `an icon is optional and a name is not`() {
+        assertEquals("Кеша", ru.uvw.dshnc.logic.VoiceChat.title(ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша"), true))
+        assertEquals("Кеша", ru.uvw.dshnc.logic.VoiceChat.title(ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "  "), true))
+        // lines but no name yet: the plain title stays until the host says who answers
+        assertEquals("Голосовой чат", ru.uvw.dshnc.logic.VoiceChat.title(null, hasLines = true))
+        assertEquals("Голосовой чат", ru.uvw.dshnc.logic.VoiceChat.title(ru.uvw.dshnc.logic.VoiceChat.Whom("  "), true))
+    }
+
+    @Test
+    fun `the api reads an object, and still a bare string`() {
+        val api = ru.uvw.dshnc.api.VoiceApi(org.robolectric.RuntimeEnvironment.getApplication())
+        // no screen is listening: the queue is ours to read
+        ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
+        ru.uvw.dshnc.logic.VoiceInbox.clear()
+        try {
+            api.handle(
+                "chat",
+                org.json.JSONObject()
+                    .put("role", "assistant")
+                    .put("text", "ответ")
+                    .put("id", "e-1")
+                    .put("who", org.json.JSONObject().put("name", "Кеша").put("icon", "🦆")),
+                40L,
+                0.0,
+            ) { }
+            val item = ru.uvw.dshnc.logic.VoiceInbox.drain().single() as ru.uvw.dshnc.logic.VoiceInbox.Item.Chat
+            assertEquals("Кеша", item.who?.name)
+            assertEquals("🦆", item.who?.icon)
+
+            api.handle(
+                "chat",
+                org.json.JSONObject().put("role", "assistant").put("text", "ответ").put("who", "Кеша"),
+                41L,
+                0.0,
+            ) { }
+            val simple = ru.uvw.dshnc.logic.VoiceInbox.drain().single() as ru.uvw.dshnc.logic.VoiceInbox.Item.Chat
+            assertEquals("Кеша", simple.who?.name)
+            assertEquals(null, simple.who?.icon)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceInbox.clear()
         }
     }
 }
