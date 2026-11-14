@@ -135,14 +135,6 @@ class VoiceChatActivity : AppCompatActivity() {
         }
         root.addView(hint)
 
-        meter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (6 * density).toInt())
-                .apply { setMargins(pad, 0, pad, 0) }
-        }
-        root.addView(meter)
-
         // The stage holds the circle and the two mode buttons that overlap it. Sizes are in
         // pixels, and the buttons are placed on the circle's edges by hand: the right one is
         // centred on the right edge, the top one on the top edge, each half outside the circle.
@@ -151,15 +143,18 @@ class VoiceChatActivity : AppCompatActivity() {
             width - pad * 2,
             resources.displayMetrics.heightPixels / 3,
         )
-        val corner = (44 * density).toInt()
-        val half = corner / 2
-        val centreX = width / 2
+        // 66 dp squares: a thumb in a car should not have to aim. They hang over the circle by
+        // 26 dp — deliberately more than before, the pair reads as attached to it.
+        val corner = (66 * density).toInt()
+        val overlap = (26 * density).toInt()
 
+        // one divider, not two: the level bar is the only line between the conversation and the
+        // button, and it sits a little lower than the text above it
         meter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (6 * density).toInt())
-                .apply { setMargins(pad, 0, pad, 0) }
+                .apply { setMargins(pad, (16 * density).toInt(), pad, 0) }
         }
         root.addView(meter)
 
@@ -189,7 +184,7 @@ class VoiceChatActivity : AppCompatActivity() {
 
         // Both buttons stand above the circle, symmetric about its centre, each hovering over
         // one edge: left is «держать», right is «переключение».
-        val boxes = ui.modeButtonBoxes(width, diameter, corner, overlapPx = (10 * density).toInt())
+        val boxes = ui.modeButtonBoxes(width, diameter, corner, overlapPx = overlap)
         modePtt = modeButton("✋", "режим: держать")
         modePtt.layoutParams = android.widget.FrameLayout.LayoutParams(corner, corner).apply {
             leftMargin = boxes[0].left
@@ -258,7 +253,7 @@ class VoiceChatActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density
         return TextView(this).apply {
             text = icon
-            textSize = 20f
+            textSize = 28f
             gravity = Gravity.CENTER
             contentDescription = description
             isClickable = true
@@ -267,7 +262,7 @@ class VoiceChatActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 0)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8 * density
+                cornerRadius = 10 * density
                 setColor(Color.parseColor("#1f2937"))
             }
         }
@@ -292,7 +287,7 @@ class VoiceChatActivity : AppCompatActivity() {
             view.setTextColor(if (active) Color.WHITE else Color.parseColor("#9ca3af"))
             view.background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 8 * density
+                cornerRadius = 10 * density
                 if (active) {
                     setColor(Color.parseColor("#2563eb"))
                 } else {

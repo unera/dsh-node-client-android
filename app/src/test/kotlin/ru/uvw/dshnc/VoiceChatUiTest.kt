@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import ru.uvw.dshnc.logic.VoiceChatUi
 import ru.uvw.dshnc.logic.VoiceMode
 
@@ -51,8 +53,8 @@ class VoiceChatUiTest {
     fun `both mode buttons stand above the circle, symmetric about its centre` () {
         val width = 1080
         val diameter = 720
-        val size = 132   // 44 dp at 3x
-        val overlap = 30 // 10 dp at 3x
+        val size = 198   // 66 dp at 3x
+        val overlap = 78 // 26 dp at 3x
         val boxes = VoiceChatUi(ru.uvw.dshnc.logic.VoiceMode.PTT).modeButtonBoxes(width, diameter, size, overlap)
         assertEquals(2, boxes.size)
         val left = boxes[0]
@@ -67,6 +69,10 @@ class VoiceChatUiTest {
         assertEquals(width, left.left + right.left + size)
         // they do not sit on top of each other
         assertTrue(right.left > left.left + size)
+        // and they hang over the circle: the squares reach further down than its top edge
+        assertTrue("the buttons must overlap the circle", overlap > size / 4)
+        assertTrue(left.left + size > 0)
+        assertTrue(right.left + size <= width)
     }
 
     @Test
@@ -76,5 +82,31 @@ class VoiceChatUiTest {
         assertEquals(1f, ui.modeButtonsAlpha(recording = false), 0.001f)
         assertFalse(ui.modeButtonsEnabled(recording = true))
         assertEquals(0.4f, ui.modeButtonsAlpha(recording = true), 0.001f)
+    }
+}
+
+/**
+ * The screen itself, built by Robolectric: the one thing a screenshot cannot check is that the
+ * layout contains exactly what was meant once — a doubled divider looked like a design choice.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceChatLayoutTest {
+    @Test
+    fun `the screen has one level bar, not two` () {
+        val activity = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        try {
+            val content = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
+            val bars = mutableListOf<android.view.View>()
+            fun walk (view: android.view.View) {
+                if (view is android.widget.ProgressBar) bars.add(view)
+                if (view is android.view.ViewGroup) {
+                    for (index in 0 until view.childCount) walk(view.getChildAt(index))
+                }
+            }
+            walk(content)
+            assertEquals("ровно одна полоса уровня", 1, bars.size)
+        } finally {
+            activity.finish()
+        }
     }
 }
