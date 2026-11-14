@@ -398,7 +398,7 @@ class VoiceStatusPlaceTest {
  */
 @RunWith(RobolectricTestRunner::class)
 class VoiceWhoTest {
-    private val kesha = ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦆")
+    private val kesha = ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦜")
 
     @Test
     fun `an empty conversation keeps the plain title`() {
@@ -408,7 +408,7 @@ class VoiceWhoTest {
 
     @Test
     fun `a line plus a name becomes the assistant in the header`() {
-        assertEquals("🦆 Кеша", ru.uvw.dshnc.logic.VoiceChat.title(kesha, hasLines = true))
+        assertEquals("🦜 Кеша", ru.uvw.dshnc.logic.VoiceChat.title(kesha, hasLines = true))
     }
 
     @Test
@@ -433,13 +433,13 @@ class VoiceWhoTest {
                     .put("role", "assistant")
                     .put("text", "ответ")
                     .put("id", "e-1")
-                    .put("who", org.json.JSONObject().put("name", "Кеша").put("icon", "🦆")),
+                    .put("who", org.json.JSONObject().put("name", "Кеша").put("icon", "🦜")),
                 40L,
                 0.0,
             ) { }
             val item = ru.uvw.dshnc.logic.VoiceInbox.drain().single() as ru.uvw.dshnc.logic.VoiceInbox.Item.Chat
             assertEquals("Кеша", item.who?.name)
-            assertEquals("🦆", item.who?.icon)
+            assertEquals("🦜", item.who?.icon)
 
             api.handle(
                 "chat",
