@@ -455,3 +455,142 @@ class VoiceWhoTest {
         }
     }
 }
+
+/**
+ * Two failures, two sentences: the gate is not the host, and a refusal is not a broken wire.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceFailureTest {
+    private val log = ru.uvw.dshnc.logic.VoiceFailure.NO_CONNECTION
+
+    @Test
+    fun `gateway statuses are a connection problem`() {
+        for (status in listOf(502, 503, 504)) {
+            assertEquals("HTTP $status", log, ru.uvw.dshnc.logic.VoiceFailure.line(status, "server said nothing useful"))
+            assertEquals(
+                ru.uvw.dshnc.logic.VoiceFailure.SAVED_LOCALLY,
+                ru.uvw.dshnc.logic.VoiceFailure.note(status, ""),
+            )
+        }
+    }
+
+    @Test
+    fun `no answer at all is a connection problem too`() {
+        val timeout = ru.uvw.dshnc.logic.VoiceFailure.line(null, "SocketTimeoutException: failed to connect")
+        assertEquals(log, timeout)
+        assertTrue(ru.uvw.dshnc.logic.VoiceFailure.isTransport(null, "UnknownHostException: dsh.example"))
+        assertTrue(ru.uvw.dshnc.logic.VoiceFailure.isTransport(null, "ConnectException: refused"))
+        assertTrue(ru.uvw.dshnc.logic.VoiceFailure.isTransport(0, "java.net.SocketTimeoutException"))
+    }
+
+    @Test
+    fun `a refusal keeps the server's words and adds no note`() {
+        val line = ru.uvw.dshnc.logic.VoiceFailure.line(
+            400,
+            "voice принимается только на /v1/upload-file (bad_type)",
+        )
+        assertEquals("хост не принял: voice принимается только на (bad_type)", line)
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceFailure.note(400, "bad_type"))
+    }
+
+    @Test
+    fun `a 500 is the host speaking, not the wire`() {
+        // the gate is 502/503/504; a plain 500 carries the application's own text
+        val line = ru.uvw.dshnc.logic.VoiceFailure.line(500, "внутренняя ошибка")
+        assertEquals("хост не принял: внутренняя ошибка", line)
+    }
+
+    @Test
+    fun `success is not a failure at all`() {
+        val outcome = ru.uvw.dshnc.logic.VoiceUpload.interpret(202, "{\"accepted\":true,\"seconds\":1.5}")
+        assertTrue(outcome is ru.uvw.dshnc.logic.VoiceUpload.Result.Accepted)
+    }
+
+    @Test
+    fun `a transport failure carries no status into the upload result`() {
+        val outcome = ru.uvw.dshnc.logic.VoiceUpload.interpret(503, "{\"code\":\"unavailable\"}")
+        assertTrue(outcome is ru.uvw.dshnc.logic.VoiceUpload.Result.Failed)
+        outcome as ru.uvw.dshnc.logic.VoiceUpload.Result.Failed
+        assertEquals(503, outcome.status)
+        assertEquals(ru.uvw.dshnc.logic.VoiceFailure.NO_CONNECTION, ru.uvw.dshnc.logic.VoiceFailure.line(outcome.status, outcome.reason))
+    }
+}
+
+/**
+ * The record button's shape: a rounded rectangle in every state.
+ *
+ * It used to turn into an oval under the finger and stay an oval afterwards, because two of the
+ * three places that painted it kept the shape of the old circle.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceButtonShapeTest {
+    private fun screen(): VoiceChatActivity =
+        org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+
+    /** GradientDrawable keeps its shape privately: read it the way the view will use it. */
+    private fun shapeOf (drawable: android.graphics.drawable.GradientDrawable): Int {
+        val state = android.graphics.drawable.GradientDrawable::class.java
+            .getDeclaredField("mGradientState")
+            .apply { isAccessible = true }
+            .get(drawable)
+        return state.javaClass.getDeclaredField("mShape").apply { isAccessible = true }.getInt(state)
+    }
+
+    private fun button (screen: VoiceChatActivity): android.widget.TextView {
+        var found: android.widget.TextView? = null
+        fun walk (view: android.view.View) {
+            if (view is android.widget.TextView && view.contentDescription?.toString() == "говорить") found = view
+            if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+        }
+        walk(screen.findViewById(android.R.id.content))
+        return requireNotNull(found) { "кнопка записи не найдена" }
+    }
+
+    @Test
+    fun `the button is a rounded rectangle when idle`() {
+        val screen = screen()
+        try {
+            val drawable = button(screen).background as android.graphics.drawable.GradientDrawable
+            assertEquals(android.graphics.drawable.GradientDrawable.RECTANGLE, shapeOf(drawable))
+            assertEquals(24 * screen.resources.displayMetrics.density, drawable.cornerRadius, 0.5f)
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `a running take paints the same rectangle in red`() {
+        val screen = screen()
+        try {
+            val activity = screen as VoiceChatActivity
+            val method = VoiceChatActivity::class.java.getDeclaredMethod("voiceButton", Int::class.java)
+                .apply { isAccessible = true }
+            val idle = method.invoke(activity, android.graphics.Color.parseColor("#2563eb")) as android.graphics.drawable.GradientDrawable
+            val busy = method.invoke(activity, android.graphics.Color.parseColor("#dc2626")) as android.graphics.drawable.GradientDrawable
+            assertEquals(android.graphics.drawable.GradientDrawable.RECTANGLE, shapeOf(idle))
+            assertEquals(android.graphics.drawable.GradientDrawable.RECTANGLE, shapeOf(busy))
+            assertEquals(24 * screen.resources.displayMetrics.density, busy.cornerRadius, 0.5f)
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `no state of the screen is an oval`() {
+        val screen = screen()
+        try {
+            var ovals = 0
+            fun walk (view: android.view.View) {
+                val background = view.background
+                if (background is android.graphics.drawable.GradientDrawable) {
+                    if (shapeOf(background) == android.graphics.drawable.GradientDrawable.OVAL) ovals += 1
+                }
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            assertEquals(0, ovals)
+        } finally {
+            screen.finish()
+        }
+    }
+}

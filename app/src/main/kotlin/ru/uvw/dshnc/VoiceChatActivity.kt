@@ -29,6 +29,7 @@ import ru.uvw.dshnc.logic.VoiceStatus
 import ru.uvw.dshnc.logic.VoiceTimer
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
+import ru.uvw.dshnc.logic.VoiceFailure
 import ru.uvw.dshnc.logic.VoiceFiles
 import ru.uvw.dshnc.logic.VoiceInbox
 import ru.uvw.dshnc.logic.VoiceOutbox
@@ -62,6 +63,19 @@ class VoiceChatActivity : AppCompatActivity() {
     private lateinit var meter: ProgressBar
     private lateinit var hint: TextView
     private lateinit var talk: TextView
+    /**
+     * The record button's background.
+     *
+     * One place decides its shape: the button is a rounded rectangle, and it was drawn as an oval
+     * under the finger because two of the three places that painted it kept the old circle. Idle is
+     * blue, a running take is red; nothing else changes.
+     */
+    private fun voiceButton (color: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 24 * resources.displayMetrics.density
+        setColor(color)
+    }
+
     /** The clock on the record button: `0:07 / 0:30`. */
     private lateinit var timerLine: TextView
     /** The screen title: it carries the assistant's name once the host says who answers. */
@@ -193,11 +207,7 @@ class VoiceChatActivity : AppCompatActivity() {
             textSize = 44f
             gravity = Gravity.CENTER
             contentDescription = "говорить"
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 24 * density
-                setColor(Color.parseColor("#2563eb"))
-            }
+            background = voiceButton(Color.parseColor("#2563eb"))
             layoutParams = android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
@@ -416,10 +426,7 @@ class VoiceChatActivity : AppCompatActivity() {
         recordStartedAt = System.currentTimeMillis()
         recording = true
         status = null
-        talk.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Color.parseColor("#dc2626"))
-        }
+        talk.background = voiceButton(Color.parseColor("#dc2626"))
         refreshHint(0.0)
         setState("слушаю")
         show("говорите")
@@ -496,14 +503,20 @@ class VoiceChatActivity : AppCompatActivity() {
                         store.addEvent("voice принято", VoiceStatus.logDetails(caption, outcome.path))
                         show(caption)
                     }
-                    is VoiceUpload.Result.Failed -> refuse(take, outcome.reason)
+                    is VoiceUpload.Result.Failed -> refuse(take, outcome.reason, outcome.status)
                 }
             }
         }, "dshnc-voice-send").start()
     }
 
-    /** The take did not land: keep it where the host can still pick it up, and say so. */
-    private fun refuse (take: Recorder.Result, reason: String) {
+    /**
+     * The take did not land: keep it where the host can still pick it up, and say why in words the
+     * person can act on.
+     *
+     * A refused request gets the server's own sentence back; a broken connection gets «плохая
+     * связь» and a quiet second line saying the recording is still on the phone.
+     */
+    private fun refuse (take: Recorder.Result, reason: String, status: Int? = null) {
         val directory = VoiceFiles.directory(store.roots, filesDir)
         val target = File(directory, take.file.name)
         val parked = runCatching {
@@ -514,19 +527,16 @@ class VoiceChatActivity : AppCompatActivity() {
             target
         }.getOrElse { take.file }
         VoiceOutbox.offer(VoiceOutbox.Recording(parked, take.seconds, mode.wire))
-        addLine(VoiceUpload.REFUSED_LINE)
         // the path stays in the log: on screen it read like a fault
-        store.addEvent("voice не принято", VoiceStatus.logDetails(reason, parked.absolutePath))
-        show(VoiceStatus.refused(reason))
-        setState("хост не принял, сохранено локально")
+        store.addEvent("voice не принято", VoiceStatus.logDetails("$status $reason", parked.absolutePath))
+        addLine(VoiceFailure.line(status, reason))
+        VoiceFailure.note(status, reason)?.let { note -> addLine(note) }
+        show(VoiceFailure.line(status, reason))
     }
 
     private fun renderIdle () {
         meter.progress = 0
-        talk.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Color.parseColor("#2563eb"))
-        }
+        talk.background = voiceButton(Color.parseColor("#2563eb"))
         refreshHint(0.0)
     }
 

@@ -97,8 +97,13 @@ object VoiceUpload {
             val seconds: Double?,
         ) : Result()
 
-        /** The host did not take it: the take stays on the phone for the older route. */
-        data class Failed(val reason: String) : Result()
+        /**
+         * The host did not take it: the take stays on the phone for the older route.
+         *
+         * @param reason the server's words, or the exception's message.
+         * @param status the HTTP status, or null when no answer came at all.
+         */
+        data class Failed(val reason: String, val status: Int? = null) : Result()
     }
 
     /**
@@ -128,7 +133,7 @@ object VoiceUpload {
             code != null -> code
             else -> "HTTP $status"
         }
-        return Result.Failed(reason)
+        return Result.Failed(reason, status)
     }
 
     /** One press of the button, named so that a retry stays the same turn. */

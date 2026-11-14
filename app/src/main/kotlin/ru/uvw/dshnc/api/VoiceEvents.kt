@@ -45,7 +45,7 @@ class VoiceEvents (private val base: String, private val token: String) {
         times: VoiceUpload.Times = VoiceUpload.Times(),
         synth: String = VoiceUpload.SYNTH_DEVICE,
     ): VoiceUpload.Result {
-        if (!file.isFile) return VoiceUpload.Result.Failed("записи ${file.name} нет на телефоне")
+        if (!file.isFile) return VoiceUpload.Result.Failed("записи ${file.name} нет на телефоне", status = 0)
         val request = try {
             val body = file.asRequestBody("audio/wav".toMediaType())
             Request.Builder()
@@ -62,8 +62,12 @@ class VoiceEvents (private val base: String, private val token: String) {
                 VoiceUpload.interpret(response.code, response.body?.string().orEmpty())
             }
         } catch (error: Throwable) {
-            // an unreachable host is not a refusal of the recording: the take stays on the phone
-            VoiceUpload.Result.Failed(error.message ?: error.javaClass.simpleName)
+            // an unreachable host is not a refusal of the recording: the take stays on the phone,
+            // and the cause travels with the answer so the screen can say "плохая связь"
+            VoiceUpload.Result.Failed(
+                "${error.javaClass.simpleName}: ${error.message ?: ""}".trim(),
+                status = null,
+            )
         }
     }
 
