@@ -585,7 +585,7 @@ class VoiceChatActivity : AppCompatActivity() {
                     } else {
                         emptyList()
                     }
-                    VoiceChatBus.putQuiet(item.id, item.role, item.text, item.who?.name, parts)
+                    VoiceChatBus.putQuiet(item.id, item.role, item.text, item.who, parts)
                     item.who?.let { who ->
                         if (who != assistantWho) {
                             assistantWho = who
@@ -680,6 +680,10 @@ class VoiceChatActivity : AppCompatActivity() {
             )
         }
 
+        // who is speaking, in the corner of every answer: an emoji and a name, small and grey
+        if (entry.role == VoiceChat.Role.ASSISTANT) {
+            entry.who?.let { who -> bubble.addView(nameTag(who)) }
+        }
         val size = if (entry.role == VoiceChat.Role.SYSTEM) 13f else 18f
         val color = Color.parseColor(VoiceBubble.textColor(entry.role))
         val parts = entry.parts.ifEmpty { listOf(AnswerPart(AnswerPart.Kind.TEXT, entry.text)) }
@@ -699,6 +703,11 @@ class VoiceChatActivity : AppCompatActivity() {
                 textSize = size
                 setTextColor(color)
                 maxWidth = bubbleMaxWidth
+                // the bubble must be as wide as the text needs, and never squeezed by a scroller
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                )
             }
             if (entry.role == VoiceChat.Role.ASSISTANT) {
                 // the model writes markdown almost always; raw ** and | in a bubble read as noise
@@ -708,9 +717,16 @@ class VoiceChatActivity : AppCompatActivity() {
                 view.text = part.text
             }
             if (hasTable(part.text)) {
-                // a wide table must scroll on its own, not stretch the conversation
+                // Only a table may be wider than the bubble, and only it scrolls: giving the whole
+                // answer to a HorizontalScrollView made it measure the text unconstrained, and the
+                // bubble collapsed to half the screen with words breaking three at a time.
                 bubble.addView(android.widget.HorizontalScrollView(this).apply {
                     isHorizontalScrollBarEnabled = true
+                    isFillViewport = true
+                    layoutParams = LinearLayout.LayoutParams(
+                        bubbleMaxWidth,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                    )
                     addView(view)
                 })
             } else {
@@ -740,6 +756,23 @@ class VoiceChatActivity : AppCompatActivity() {
     /** Does this text carry a table? Then its view has to scroll instead of stretching. */
     private fun hasTable (text: String): Boolean =
         text.lineSequence().any { line -> line.trimStart().startsWith("|") }
+
+    /** The assistant's corner label: `🦜 Кеша`, or just the name when there is no emoji. */
+    private fun nameTag (who: VoiceChat.Whom): TextView {
+        val density = resources.displayMetrics.density
+        val icon = who.icon?.trim().orEmpty()
+        return TextView(this).apply {
+            text = if (icon.isEmpty()) who.name else "$icon ${who.name}"
+            textSize = 11f
+            gravity = Gravity.END
+            setTextColor(Color.parseColor("#9ca3af"))
+            setPadding(0, (2 * density).toInt(), 0, 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+        }
+    }
 
     /** A small grey line under a remark: a caption, never a remark of its own. */
     private fun caption (text: String): TextView {

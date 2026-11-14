@@ -760,3 +760,86 @@ class VoiceAnswerMenuTest {
         store.answerMode = "long"
     }
 }
+
+/**
+ * The answer bubble: as wide as the text needs, never squeezed to half the screen, and labelled
+ * with who is speaking.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceAnswerBubbleTest {
+    private fun screen(): VoiceChatActivity =
+        org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+
+    private fun walk (view: android.view.View, visit: (android.view.View) -> Unit) {
+        visit(view)
+        if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i), visit)
+    }
+
+    @Test
+    fun `a long answer takes most of the width`() {
+        val screen = screen()
+        ru.uvw.dshnc.logic.VoiceInbox.clear()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            val text = (1..40).joinToString(" ") { "слово$it" }
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet("w-1", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, text)
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val root = screen.findViewById<android.view.View>(android.R.id.content)
+            root.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(screen.resources.displayMetrics.widthPixels, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(screen.resources.displayMetrics.heightPixels, android.view.View.MeasureSpec.EXACTLY),
+            )
+            root.layout(0, 0, screen.resources.displayMetrics.widthPixels, screen.resources.displayMetrics.heightPixels)
+
+            var widest = 0
+            var table: android.widget.HorizontalScrollView? = null
+            walk(root) { view ->
+                if (view is android.widget.TextView && view.text?.contains("слово1") == true) {
+                    widest = maxOf(widest, view.width)
+                }
+                if (view is android.widget.HorizontalScrollView) table = view
+            }
+            val screenWidth = screen.resources.displayMetrics.widthPixels
+            // a plain paragraph is not wrapped in a scroller
+            assertEquals(null, table)
+            assertTrue(
+                "answer text is ${widest}px of ${screenWidth}px, it must use most of the width",
+                widest > screenWidth * 0.6,
+            )
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `the corner label names the assistant, and only when it is known`() {
+        val screen = screen()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "w-2",
+                ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT,
+                "ответ",
+                ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦜"),
+            )
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet("w-2", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ без имени")
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val texts = mutableListOf<String>()
+            walk(screen.findViewById(android.R.id.content)) { view ->
+                if (view is android.widget.TextView) texts.add(view.text?.toString().orEmpty())
+            }
+            assertTrue(texts.contains("🦜 Кеша"))
+            // a name without an emoji is just the name
+            val method = VoiceChatActivity::class.java.getDeclaredMethod("nameTag", ru.uvw.dshnc.logic.VoiceChat.Whom::class.java)
+                .apply { isAccessible = true }
+            val plain = method.invoke(screen, ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша")) as android.widget.TextView
+            assertEquals("Кеша", plain.text.toString())
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+}

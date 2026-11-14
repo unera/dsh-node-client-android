@@ -128,8 +128,8 @@ class VoiceChatLog (private val limit: Int = 200) {
         val note: String? = null,
         /** How many steps the answer took; null when there were none to mention. */
         val steps: Int? = null,
-        /** The assistant's name, on the first answer of an exchange only. */
-        val who: String? = null,
+        /** Who answers: the corner label of an answer bubble. */
+        val who: VoiceChat.Whom? = null,
         /** The pieces to draw: the forms of an answer, with the line between them when both. */
         val parts: List<AnswerPart> = emptyList(),
     )
@@ -162,7 +162,7 @@ class VoiceChatLog (private val limit: Int = 200) {
         id: String,
         role: VoiceChat.Role,
         text: String,
-        who: String? = null,
+        who: VoiceChat.Whom? = null,
         parts: List<AnswerPart> = emptyList(),
     ): Change {
         if (role == VoiceChat.Role.USER) {
@@ -178,13 +178,9 @@ class VoiceChatLog (private val limit: Int = 200) {
         val duplicate = items.any { it.id == id && it.role == role && it.text == text }
         if (duplicate) return Change.IGNORED
         val count = if (role == VoiceChat.Role.ASSISTANT) steps.remove(id) else null
-        // the name is worth saying once per exchange: repeating it before every paragraph is noise
-        val name = when {
-            role != VoiceChat.Role.ASSISTANT -> null
-            who.isNullOrBlank() -> null
-            items.any { it.id == id && it.role == VoiceChat.Role.ASSISTANT } -> null
-            else -> who.trim()
-        }
+        // every answer carries its speaker: the label sits in the corner of the bubble, so a second
+        // answer of the same exchange needs it just as much as the first
+        val name = if (role == VoiceChat.Role.ASSISTANT) who?.takeIf { it.name.isNotBlank() } else null
         items.add(Entry(id, role, text, placeholder = false, steps = count, who = name, parts = parts))
         trim()
         return Change.ADDED

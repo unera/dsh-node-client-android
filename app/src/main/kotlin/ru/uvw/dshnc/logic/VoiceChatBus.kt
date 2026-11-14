@@ -28,12 +28,12 @@ object VoiceChatBus {
         id: String,
         role: VoiceChat.Role,
         text: String,
-        who: String? = null,
+        who: VoiceChat.Whom? = null,
         parts: List<AnswerPart> = emptyList(),
     ): VoiceChatLog.Change = synchronized(lock) { log.put(id, role, text, who, parts) }
 
     /** A line from the host: the transcript of a take, or the answer. */
-    fun put (id: String, role: VoiceChat.Role, text: String, who: String? = null): VoiceChatLog.Change {
+    fun put (id: String, role: VoiceChat.Role, text: String, who: VoiceChat.Whom? = null): VoiceChatLog.Change {
         val change = synchronized(lock) { log.put(id, role, text, who) }
         if (change != VoiceChatLog.Change.IGNORED) onChanged?.invoke()
         return change

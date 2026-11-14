@@ -163,6 +163,8 @@ class VoiceApiTest {
     @Test
     fun chatClippingAndPairingHappenInTheModel () {
         // the method only clips and stores; the pairing is covered by VoiceChatTest
+        ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
+        ru.uvw.dshnc.logic.VoiceInbox.clear()
         val long = "я".repeat(4100)
         val outcome = api.handle(
             "chat",
@@ -179,6 +181,8 @@ class VoiceApiTest {
 
     @Test
     fun chatQueuesTheLineAndAnswersAtOnce () {
+        // nothing is listening: the queue is ours to read
+        ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
         ru.uvw.dshnc.logic.VoiceInbox.clear()
         ru.uvw.dshnc.logic.VoiceChatBus.clear()
         try {
@@ -204,6 +208,7 @@ class VoiceApiTest {
 
     @Test
     fun activityQueuesOneStepAndRefusesANegativeNumber () {
+        ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
         ru.uvw.dshnc.logic.VoiceInbox.clear()
         try {
             val outcome = api.handle(
