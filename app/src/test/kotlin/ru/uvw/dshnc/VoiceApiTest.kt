@@ -37,7 +37,7 @@ class VoiceApiTest {
         val methods = schema.optJSONArray("methods")
         assertNotNull(methods)
         val names = (0 until methods!!.length()).map { methods.getJSONObject(it).optString("method") }
-        assertEquals(listOf("caps", "say", "stop", "chat", "activity", "play", "record"), names)
+        assertEquals(listOf("caps", "say", "stop", "chat", "answer", "activity", "play", "record"), names)
     }
 
     @Test

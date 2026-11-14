@@ -1075,3 +1075,102 @@ class VoiceScrollTest {
         }
     }
 }
+
+/**
+ * One command, one answer: the voice is downloaded, the bubble appears, the sound queues behind
+ * whatever is already speaking — and the command answers before any of that is heard.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceAnswerCommandTest {
+    private fun api (): ru.uvw.dshnc.api.VoiceApi =
+        ru.uvw.dshnc.api.VoiceApi(org.robolectric.RuntimeEnvironment.getApplication())
+
+    private fun body (path: String = "/var/lib/dsh/voice/out/ex-1.ogg") = org.json.JSONObject()
+        .put("id", "ex-1")
+        .put("text", "**Ответ** с markdown")
+        .put("speak", "Ответ")
+        .put("who", org.json.JSONObject().put("name", "Кеша").put("icon", "🦜"))
+        .put("seconds", 3.4)
+        .put("path", path)
+
+    @Test
+    fun `the file is fetched by this command's ticket and the bubble is queued` () {
+        val api = api()
+        ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
+        ru.uvw.dshnc.logic.VoiceInbox.clear()
+        var askedSeq = -1L
+        var wrote = ""
+        api.downloader = { seq, localPath, _ ->
+            askedSeq = seq
+            wrote = localPath
+            java.io.File(localPath).writeBytes(ByteArray(64))
+            org.json.JSONObject().put("status", "ok")
+        }
+        try {
+            val outcome = api.handle("answer", body(), 77L, 0.0) { }
+            assertEquals("ok", outcome.optString("status"))
+            assertEquals(true, outcome.optJSONObject("payload")!!.optBoolean("queued"))
+            // the route is a transfer route: the ticket is the command number
+            assertEquals(77L, askedSeq)
+            assertTrue("файл должен лежать в cacheDir", wrote.contains("/cache/answer-ex-1"))
+            assertTrue(java.io.File(wrote).isFile)
+
+            val item = ru.uvw.dshnc.logic.VoiceInbox.drain().single() as ru.uvw.dshnc.logic.VoiceInbox.Item.Chat
+            assertEquals("ex-1", item.id)
+            assertEquals("Кеша", item.who?.name)
+            assertEquals("🦜", item.who?.icon)
+            assertEquals("Ответ", item.speak)
+            assertTrue(item.text.contains("markdown"))
+        } finally {
+            api.shutdown()
+            ru.uvw.dshnc.logic.VoiceInbox.clear()
+        }
+    }
+
+    @Test
+    fun `a failed download refuses and queues no speech`() {
+        val api = api()
+        ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
+        ru.uvw.dshnc.logic.VoiceInbox.clear()
+        api.downloader = { _, _, _ ->
+            org.json.JSONObject().put("status", "error").put("code", "forbidden").put("message", "нет доступа")
+        }
+        try {
+            val outcome = api.handle("answer", body(), 78L, 0.0) { }
+            assertEquals("error", outcome.optString("status"))
+            assertEquals("forbidden", outcome.optString("code"))
+            // nothing to show and nothing to say: the command is simply refused
+            assertEquals(0, ru.uvw.dshnc.logic.VoiceInbox.size())
+        } finally {
+            api.shutdown()
+            ru.uvw.dshnc.logic.VoiceInbox.clear()
+        }
+    }
+
+    @Test
+    fun `an answer without a file, an id or a link to the server is refused`() {
+        val api = api()
+        try {
+            assertEquals("bad_args", api.handle("answer", body(path = " "), 79L, 0.0) { }.optString("code"))
+            val noLink = api.handle("answer", body(), 80L, 0.0) { }
+            assertEquals("voice_unavailable", noLink.optString("code"))
+        } finally {
+            api.shutdown()
+        }
+    }
+
+    @Test
+    fun `answer is declared next to chat and play, which still work` () {
+        val api = api()
+        try {
+            val methods = api.schema().optJSONArray("methods")!!
+            val names = (0 until methods.length()).map { methods.getJSONObject(it).optString("method") }
+            assertTrue(names.contains("answer"))
+            // the old two-command route stays for a server that has not been updated yet
+            assertTrue(names.contains("chat"))
+            assertTrue(names.contains("play"))
+        } finally {
+            api.shutdown()
+        }
+    }
+}

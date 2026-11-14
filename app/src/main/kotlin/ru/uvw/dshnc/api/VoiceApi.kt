@@ -76,6 +76,7 @@ class VoiceApi (private val context: Context) {
         speakText = { text -> speakBlocking(text) },
         playAudio = { audio, seq -> playBlocking(audio, seq) },
         log = { kind, detail -> TokenStore(context).addEvent(kind, detail) },
+        playLocal = { path -> playFileBlocking(path) },
     )
 
     fun schema (): JSONObject = JSONObject()
@@ -99,6 +100,11 @@ class VoiceApi (private val context: Context) {
                 "chat",
                 "Show one line in the voice conversation: the transcript of the take, or the answer",
                 chatArgs(),
+            ))
+            .put(method(
+                "answer",
+                "One answer at once: download its voice by this command, show the text, queue the sound",
+                answerArgs(),
             ))
             .put(method(
                 "activity",
@@ -146,6 +152,24 @@ class VoiceApi (private val context: Context) {
                 .put("type", "string")
                 .put("description", "A synthesized file on the host to play instead of the system engine")))
         .put("required", JSONArray().put("role").put("text"))
+
+    /** The `answer` arguments: the text, the spoken form, who answers, and the file on the host. */
+    private fun answerArgs (): JSONObject = JSONObject()
+        .put("type", "object")
+        .put("properties", JSONObject()
+            .put("id", JSONObject().put("type", "string").put("description", "The exchange this answer belongs to"))
+            .put("text", JSONObject().put("type", "string").put("description", "What to show in the bubble"))
+            .put("speak", JSONObject().put("type", "string").put("description", "What to say out loud"))
+            .put("who", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject()
+                    .put("name", JSONObject().put("type", "string"))
+                    .put("icon", JSONObject().put("type", "string"))))
+            .put("seconds", JSONObject().put("type", "number"))
+            .put("path", JSONObject()
+                .put("type", "string")
+                .put("description", "The file on the host: the route reads it from this command")))
+        .put("required", JSONArray().put("path"))
 
     /** The `activity` arguments: one step of the model's work, shown as a single progress line. */
     private fun activityArgs (): JSONObject = JSONObject()
@@ -208,6 +232,7 @@ class VoiceApi (private val context: Context) {
         "say" -> say(args, seq, commandSeconds, submit)
         "chat" -> chat(args, seq)
         "activity" -> activity(args)
+        "answer" -> answer(args, seq, commandSeconds)
         "play" -> play(args, seq, commandSeconds)
         "record" -> record(args, seq, commandSeconds, submit)
         "stop" -> stop()
@@ -417,6 +442,92 @@ class VoiceApi (private val context: Context) {
             },
         )
         return queued()
+    }
+
+    /**
+     * One answer: the text and the voice in a single command.
+     *
+     * This used to be two commands — `chat` for the bubble and `play` for the sound — and the
+     * second one failed: the download route opens a file only for a command that is allowed to
+     * transfer, and `play` was not one of them. Now the command carries both, downloads the voice
+     * with its own ticket, answers at once and queues the sound behind whatever is already playing.
+     *
+     * The answer is never late because of the download: a person sees the bubble the moment the
+     * bytes are on disk, and the speech waits its turn in the queue like every other sentence.
+     */
+    private fun answer (args: JSONObject, seq: Long, commandSeconds: Double): JSONObject {
+        val id = args.optString("id").trim()
+        val text = VoiceChat.clip(args.optString("text"))
+        val speak = args.optString("speak").trim().takeIf { it.isNotEmpty() }
+        val hostPath = args.optString("path").trim()
+        if (hostPath.isEmpty()) return err("bad_args", "нужен непустой path: что скачивать")
+        if (text.isBlank() && speak == null) return err("bad_args", "нужен text или speak")
+        val download = downloader ?: return err(
+            "voice_unavailable",
+            "узел не подключился к серверу: файл неоткуда взять",
+        )
+        // the file is named after the exchange so that two answers never collide in the cache
+        val target = File(context.cacheDir, "answer-" + (id.ifEmpty { seq.toString() }) + ".ogg")
+        val fetched = try {
+            download(seq, target.absolutePath, commandSeconds)
+        } catch (error: Throwable) {
+            runCatching { target.delete() }
+            return err("voice_failed", "файл не скачался: ${error.message ?: error.javaClass.simpleName}")
+        }
+        if (fetched.optString("status") != "ok") {
+            runCatching { target.delete() }
+            return fetched
+        }
+        val who = whoOf(args)
+        VoiceInbox.post(VoiceInbox.Item.Chat(id, VoiceChat.Role.ASSISTANT, text.ifBlank { speak.orEmpty() }, who, speak))
+        speaker.submit(VoiceSpeaker.Task(
+            id = id,
+            text = speak ?: text,
+            localFile = target.absolutePath,
+            seq = seq,
+        ))
+        TokenStore(context).addEvent(
+            "answer",
+            "${text.length} симв, speak=${speak?.length ?: 0}, файл ${target.length()} Б, $hostPath",
+        )
+        return queued()
+    }
+
+    /** Who answers, from the argument: an object with a name and an optional emoji. */
+    private fun whoOf (args: JSONObject): VoiceChat.Whom? {
+        val value = args.opt("who")
+        return when (value) {
+            is JSONObject -> value.optString("name").trim().takeIf { it.isNotEmpty() }?.let { name ->
+                VoiceChat.Whom(name, value.optString("icon").trim().takeIf { it.isNotEmpty() })
+            }
+            is String -> value.trim().takeIf { it.isNotEmpty() }?.let { VoiceChat.Whom(it) }
+            else -> null
+        }
+    }
+
+    /**
+     * Play a file that is already on the phone, then drop it.
+     *
+     * The answer is downloaded before it is queued, so this is the ordinary path for a synthesized
+     * voice: play to the end, delete, and let the next sentence start.
+     */
+    private fun playFileBlocking (path: String) {
+        val file = File(path)
+        val player = MediaPlayer()
+        val done = CountDownLatch(1)
+        try {
+            player.setDataSource(path)
+            player.prepare()
+            player.setOnCompletionListener { done.countDown() }
+            player.start()
+            if (!done.await(MAX_SPEECH_SECONDS, TimeUnit.SECONDS)) {
+                throw IllegalStateException("воспроизведение не закончилось за $MAX_SPEECH_SECONDS с")
+            }
+        } finally {
+            runCatching { player.stop() }
+            runCatching { player.release() }
+            runCatching { file.delete() }
+        }
     }
 
     /**
