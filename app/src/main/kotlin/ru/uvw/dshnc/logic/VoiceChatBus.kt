@@ -24,9 +24,10 @@ object VoiceChatBus {
     }
 
     /** A line from the host: the transcript of a take, or the answer. */
-    fun put (id: String, role: VoiceChat.Role, text: String) {
-        synchronized(lock) { log.put(id, role, text) }
-        onChanged?.invoke()
+    fun put (id: String, role: VoiceChat.Role, text: String): VoiceChatLog.Change {
+        val change = synchronized(lock) { log.put(id, role, text) }
+        if (change != VoiceChatLog.Change.IGNORED) onChanged?.invoke()
+        return change
     }
 
     /** A remark the screen makes about itself. */

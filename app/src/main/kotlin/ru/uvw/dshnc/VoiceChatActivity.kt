@@ -432,12 +432,19 @@ class VoiceChatActivity : AppCompatActivity() {
         holding = false
         if (recorder.isRecording) stopRecording()
         VoiceOutbox.onEvent = null
-        VoiceChatBus.onChanged = null
+    }
+
+    override fun onResume () {
+        super.onResume()
+        // coming back to a screen that was in the background: the log is the truth, draw it again
+        VoiceChatBus.onChanged = { runOnUiThread { renderChat() } }
+        renderChat()
     }
 
     override fun onDestroy () {
         super.onDestroy()
         ticker.removeCallbacksAndMessages(null)
         recorder.cancel()
+        VoiceChatBus.onChanged = null
     }
 }

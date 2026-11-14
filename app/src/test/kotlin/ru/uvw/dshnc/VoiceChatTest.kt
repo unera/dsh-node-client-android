@@ -7,6 +7,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import ru.uvw.dshnc.logic.VoiceChat
+import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
 
 /**
@@ -93,6 +94,57 @@ class VoiceChatTest {
         val change = log.put("never-seen", VoiceChat.Role.USER, "слова без записи")
         assertEquals(VoiceChatLog.Change.ADDED, change)
         assertEquals(1, log.snapshot().size)
+    }
+
+
+    @Test
+    fun `the screen is notified when a line arrives` () {
+        var notified = 0
+        VoiceChatBus.clear()
+        VoiceChatBus.onChanged = { notified += 1 }
+        try {
+            VoiceChatBus.recording("x-9", "вы · 1.5 с")
+            assertEquals(1, notified)
+            VoiceChatBus.put("x-9", VoiceChat.Role.USER, "привет")
+            assertEquals(2, notified)
+            VoiceChatBus.put("x-9", VoiceChat.Role.ASSISTANT, "привет и тебе")
+            assertEquals(3, notified)
+        } finally {
+            VoiceChatBus.onChanged = null
+            VoiceChatBus.clear()
+        }
+    }
+
+    @Test
+    fun `a duplicate line does not wake the screen` () {
+        var notified = 0
+        VoiceChatBus.clear()
+        try {
+            VoiceChatBus.put("y-1", VoiceChat.Role.USER, "одна и та же фраза", )
+            VoiceChatBus.onChanged = { notified += 1 }
+            val change = VoiceChatBus.put("y-1", VoiceChat.Role.USER, "одна и та же фраза")
+            assertEquals(VoiceChatLog.Change.IGNORED, change)
+            assertEquals(0, notified)
+        } finally {
+            VoiceChatBus.onChanged = null
+            VoiceChatBus.clear()
+        }
+    }
+
+    @Test
+    fun `lines that arrive while the screen is closed are drawn on return` () {
+        VoiceChatBus.clear()
+        try {
+            // the screen is closed: nobody listens to the bus
+            VoiceChatBus.onChanged = null
+            VoiceChatBus.put("z-1", VoiceChat.Role.USER, "вопрос без экрана")
+            VoiceChatBus.put("z-1", VoiceChat.Role.ASSISTANT, "ответ без экрана")
+            // the screen opens: it draws the whole log, which is what renderChat does
+            val texts = VoiceChatBus.snapshot().map { it.text }
+            assertEquals(listOf("вопрос без экрана", "ответ без экрана"), texts)
+        } finally {
+            VoiceChatBus.clear()
+        }
     }
 
     @Test

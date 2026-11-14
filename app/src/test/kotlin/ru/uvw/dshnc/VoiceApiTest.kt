@@ -177,6 +177,33 @@ class VoiceApiTest {
         ru.uvw.dshnc.logic.VoiceChatBus.clear()
     }
 
+
+    @Test
+    fun chatReportsShownOnlyWhenTheLineIsNew () {
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            val first = api.handle(
+                "chat",
+                JSONObject().put("role", "assistant").put("text", "ответ").put("id", "q-1"),
+                30L,
+                0.0,
+            ) { }
+            assertEquals("ok", first.optString("status"))
+            assertEquals(true, first.optJSONObject("payload")!!.optBoolean("shown"))
+            val again = api.handle(
+                "chat",
+                JSONObject().put("role", "assistant").put("text", "ответ").put("id", "q-1"),
+                31L,
+                0.0,
+            ) { }
+            // a repeated line is not new content: the host is told, not reassured
+            assertEquals("error", again.optString("status"))
+            assertEquals("duplicate", again.optString("code"))
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        }
+    }
+
     @Test
     fun theVoiceApiBindsNoRulesAtAll () {
         // flushAround here was a mistake with a measured cost: the barrier runs only on an empty

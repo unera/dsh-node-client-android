@@ -11,6 +11,8 @@ import java.io.File
 import java.util.Locale
 import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatBus
+import ru.uvw.dshnc.logic.VoiceChatLog
+import ru.uvw.dshnc.store.TokenStore
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.logic.VoiceOutbox
 import java.util.concurrent.ConcurrentHashMap
@@ -325,12 +327,32 @@ class VoiceApi (private val context: Context) {
      * player as a separate `play` command.
      */
     private fun chat (args: JSONObject): JSONObject {
-        val role = VoiceChat.Role.parse(args.optString("role"))
-            ?: return err("bad_args", "role бывает user или assistant, а не «${args.optString("role")}»")
+        val events = TokenStore(context)
+        val rawRole = args.optString("role")
+        val role = VoiceChat.Role.parse(rawRole)
+        if (role == null) {
+            events.addEvent("chat-отказ", "role=«$rawRole»")
+            return err("bad_args", "role бывает user или assistant, а не «$rawRole»")
+        }
         val raw = args.optString("text")
-        if (raw.isBlank()) return err("bad_args", "нужен непустой text")
+        if (raw.isBlank()) {
+            events.addEvent("chat-отказ", "$rawRole: пустой текст")
+            return err("bad_args", "нужен непустой text")
+        }
         val id = args.optString("id").trim()
-        VoiceChatBus.put(id, role, VoiceChat.clip(raw))
+        val text = VoiceChat.clip(raw)
+        val change = VoiceChatBus.put(id, role, text)
+        if (change == VoiceChatLog.Change.IGNORED) {
+            // the line is already there: saying "shown" again would be a lie about new content
+            events.addEvent("chat-повтор", "$rawRole ${text.length} симв, id=$id")
+            return err("duplicate", "такая реплика уже показана")
+        }
+        // temporary diagnostics: the host reads them through session.debug_info when the screen
+        // looks empty and the only question is whether the line ever arrived
+        events.addEvent(
+            "chat " + if (role == VoiceChat.Role.USER) "user" else "assistant",
+            "${text.length} симв, id=$id, ${if (change == VoiceChatLog.Change.REPLACED) "замена" else "новая"}",
+        )
         return ok(JSONObject().put("shown", true))
     }
 
