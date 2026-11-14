@@ -12,6 +12,7 @@ import java.util.Locale
 import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceChatLog
+import ru.uvw.dshnc.logic.VoiceDegraded
 import ru.uvw.dshnc.logic.VoiceInbox
 import ru.uvw.dshnc.logic.VoiceReplay
 import ru.uvw.dshnc.logic.VoiceSpeaker
@@ -428,7 +429,8 @@ class VoiceApi (private val context: Context) {
             is String -> whoArg.trim().takeIf { it.isNotEmpty() }?.let { VoiceChat.Whom(it) }
             else -> null
         }
-        VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text, who, speak.takeIf { it.isNotBlank() }))
+        val degraded = VoiceDegraded.parse(args.opt("degraded"))
+        VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text, who, speak.takeIf { it.isNotBlank() }, degraded))
         if (say || audio != null) {
             speaker.submit(VoiceSpeaker.Task(id = id, text = spokenText, audio = audio, seq = seq))
             if (audio == null) VoiceReplay.rememberSpeech(spokenText)
@@ -509,7 +511,8 @@ class VoiceApi (private val context: Context) {
             return fetched
         }
         val who = whoOf(args)
-        VoiceInbox.post(VoiceInbox.Item.Chat(id, VoiceChat.Role.ASSISTANT, text.ifBlank { speak.orEmpty() }, who, speak))
+        val degraded = VoiceDegraded.parse(args.opt("degraded"))
+        VoiceInbox.post(VoiceInbox.Item.Chat(id, VoiceChat.Role.ASSISTANT, text.ifBlank { speak.orEmpty() }, who, speak, degraded))
         // the last answer stays available for «повтори»: the file replaces the previous one
         VoiceReplay.rememberFile(target, context.cacheDir)
         speaker.submit(VoiceSpeaker.Task(

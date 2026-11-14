@@ -25,6 +25,8 @@ object VoiceInbox {
             val who: VoiceChat.Whom? = null,
             /** The short form of an answer, when the host sent one for the ear. */
             val speak: String? = null,
+            /** What the host said about its own voice, when it fell back to the phone's. */
+            val degraded: VoiceDegraded.Report? = null,
         ) : Item()
 
         /** A step of the model's work: shown in one line that replaces the previous one. */

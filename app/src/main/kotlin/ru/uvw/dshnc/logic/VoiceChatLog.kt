@@ -132,6 +132,10 @@ class VoiceChatLog (private val limit: Int = 200) {
         val who: VoiceChat.Whom? = null,
         /** The pieces to draw: the forms of an answer, with the line between them when both. */
         val parts: List<AnswerPart> = emptyList(),
+        /** The host's own words about a failed synthesis, if it said anything. */
+        val degraded: VoiceDegraded.Report? = null,
+        /** What came of the bug report: null — not sent yet, `SENT`, or the refusal. */
+        val report: String? = null,
     )
 
     /** What a write did, so the screen knows how much to redraw. */
@@ -164,6 +168,7 @@ class VoiceChatLog (private val limit: Int = 200) {
         text: String,
         who: VoiceChat.Whom? = null,
         parts: List<AnswerPart> = emptyList(),
+        degraded: VoiceDegraded.Report? = null,
     ): Change {
         if (role == VoiceChat.Role.USER) {
             val index = items.indexOfLast { it.id == id && it.placeholder }
@@ -181,7 +186,7 @@ class VoiceChatLog (private val limit: Int = 200) {
         // every answer carries its speaker: the label sits in the corner of the bubble, so a second
         // answer of the same exchange needs it just as much as the first
         val name = if (role == VoiceChat.Role.ASSISTANT) who?.takeIf { it.name.isNotBlank() } else null
-        items.add(Entry(id, role, text, placeholder = false, steps = count, who = name, parts = parts))
+        items.add(Entry(id, role, text, placeholder = false, steps = count, who = name, parts = parts, degraded = degraded))
         trim()
         return Change.ADDED
     }
@@ -203,6 +208,20 @@ class VoiceChatLog (private val limit: Int = 200) {
         if (index < 0) return false
         if (!items[index].placeholder) return false
         items[index] = items[index].copy(note = text)
+        return true
+    }
+
+    /**
+     * Remember what came of the bug report.
+     *
+     * @param id the exchange of the answer the report was about.
+     * @param text `SENT`, or the server's refusal in words.
+     * @returns true when there was an answer to attach it to.
+     */
+    fun reportResult (id: String, text: String): Boolean {
+        val index = items.indexOfLast { it.id == id && it.degraded != null }
+        if (index < 0) return false
+        items[index] = items[index].copy(report = text)
         return true
     }
 

@@ -1383,3 +1383,81 @@ class VoiceReplayTest {
         }
     }
 }
+
+/**
+ * A failed synthesis is said out loud on the screen, and can be sent back with one tap.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceDegradedTest {
+    private fun app(): android.content.Context = org.robolectric.RuntimeEnvironment.getApplication()
+
+    @Test
+    fun `the field is read as kind and message, and a broken one is ignored`() {
+        val parsed = ru.uvw.dshnc.logic.VoiceDegraded.parse(
+            org.json.JSONObject().put("kind", "tts-failed").put("message", "silero provider has been stopped"),
+        )
+        assertEquals("tts-failed", parsed?.kind)
+        assertEquals("silero provider has been stopped", parsed?.message)
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceDegraded.parse(null))
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceDegraded.parse("строка"))
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceDegraded.parse(org.json.JSONObject().put("message", "без kind")))
+    }
+
+    @Test
+    fun `the report body is exactly the agreed event`() {
+        val body = ru.uvw.dshnc.logic.VoiceDegraded.body(
+            "ex-1",
+            ru.uvw.dshnc.logic.VoiceDegraded.Report("tts-failed", "silero provider has been stopped"),
+            "0.10.42",
+        )
+        assertEquals("bug-report", body.getString("type"))
+        assertEquals("ex-1", body.getString("id"))
+        assertEquals("tts-failed", body.getString("kind"))
+        assertEquals("silero provider has been stopped", body.getString("text"))
+        assertEquals("0.10.42", body.getString("app"))
+        assertEquals(5, body.length())
+    }
+
+    @Test
+    fun `the line appears only when the host said something`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet("d-1", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "обычный ответ")
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "d-2", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ с деградацией",
+                degraded = ru.uvw.dshnc.logic.VoiceDegraded.Report("tts-failed", "silero provider has been stopped"),
+            )
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val texts = mutableListOf<String>()
+            fun walk (view: android.view.View) {
+                if (view is android.widget.TextView) texts.add(view.text?.toString().orEmpty())
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            // exactly one such line, and it carries the report button
+            assertEquals(1, texts.count { it == ru.uvw.dshnc.logic.VoiceDegraded.LINE })
+            assertEquals(1, texts.count { it == "Отчёт" })
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `a sent report leaves no button, a refusal keeps it`() {
+        val log = ru.uvw.dshnc.logic.VoiceChatLog()
+        log.put(
+            "d-3", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ",
+            degraded = ru.uvw.dshnc.logic.VoiceDegraded.Report("tts-failed", "нет голоса"),
+        )
+        assertEquals(null, log.snapshot().single().report)
+        assertTrue(log.reportResult("d-3", ru.uvw.dshnc.logic.VoiceDegraded.SENT))
+        assertEquals(ru.uvw.dshnc.logic.VoiceDegraded.SENT, log.snapshot().single().report)
+        assertTrue(log.reportResult("d-3", ru.uvw.dshnc.logic.VoiceDegraded.failed("bad_type")))
+        assertEquals("не удалось отправить отчёт: bad_type", log.snapshot().single().report)
+        // an exchange without a degraded report has nothing to attach to
+        assertEquals(false, log.reportResult("нет-такого", "x"))
+    }
+}

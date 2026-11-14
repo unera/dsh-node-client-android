@@ -24,6 +24,7 @@ import ru.uvw.dshnc.logic.AnswerMode
 import ru.uvw.dshnc.logic.AnswerPart
 import ru.uvw.dshnc.logic.VoiceAnswer
 import ru.uvw.dshnc.logic.VoiceBubble
+import ru.uvw.dshnc.logic.VoiceDegraded
 import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatUi
 import ru.uvw.dshnc.logic.VoiceMenu
@@ -631,7 +632,7 @@ class VoiceChatActivity : AppCompatActivity() {
                     } else {
                         emptyList()
                     }
-                    VoiceChatBus.putQuiet(item.id, item.role, item.text, item.who, parts)
+                    VoiceChatBus.putQuiet(item.id, item.role, item.text, item.who, parts, item.degraded)
                     item.who?.let { who ->
                         if (who != assistantWho) {
                             assistantWho = who
@@ -828,6 +829,10 @@ class VoiceChatActivity : AppCompatActivity() {
                 bubble.addView(view)
             }
         }
+        // the host could not synthesize: say so in a warm colour, and offer one tap to report it
+        if (entry.role == VoiceChat.Role.ASSISTANT) {
+            entry.degraded?.let { report -> bubble.addView(degradedLine(entry, report)) }
+        }
         // captions live inside the bubble: they belong to the remark above them
         entry.note?.let { note -> bubble.addView(caption(note)) }
         entry.steps?.takeIf { it > 0 }?.let { count -> bubble.addView(caption("шагов: $count")) }
@@ -916,6 +921,70 @@ class VoiceChatActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * The line about a failed synthesis: the reason, and a way to send it back.
+     *
+     * It is text, not speech: it explains why the voice sounded wrong, and reading it is enough.
+     * After a successful report the button goes away and the line says so; a refusal keeps the
+     * button and shows the server's own words, so a second attempt is possible.
+     */
+    private fun degradedLine (entry: VoiceChatLog.Entry, report: VoiceDegraded.Report): View {
+        val density = resources.displayMetrics.density
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (4 * density).toInt(), 0, 0)
+        }
+        val sent = entry.report == VoiceDegraded.SENT
+        val message = entry.report?.takeIf { it != VoiceDegraded.SENT } ?: VoiceDegraded.LINE
+        row.addView(TextView(this).apply {
+            text = message
+            textSize = 12f
+            setTextColor(Color.parseColor("#f59e0b"))
+        })
+        if (!sent) {
+            row.addView(TextView(this).apply {
+                text = "Отчёт"
+                textSize = 12f
+                setTextColor(Color.parseColor("#93c5fd"))
+                paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+                setPadding(0, (2 * density).toInt(), 0, 0)
+                isClickable = true
+                setOnClickListener { sendReport(entry.id, report) }
+            })
+        }
+        return row
+    }
+
+    /** Send the reason back to the host: one event, no retries, the answer is what it is. */
+    private fun sendReport (id: String, report: VoiceDegraded.Report) {
+        val base = store.base
+        val token = store.token
+        if (base == null || token == null) {
+            finishReport(id, VoiceDegraded.failed("узел не подключён к хосту"))
+            return
+        }
+        val body = VoiceDegraded.body(id, report, BuildConfig.VERSION_NAME)
+        Thread({
+            val outcome = try {
+                ru.uvw.dshnc.api.NodeApi(base).sendEvent(token, body)
+                null
+            } catch (error: ru.uvw.dshnc.api.ApiException) {
+                error.message.ifBlank { "HTTP ${error.status}" }
+            } catch (error: Throwable) {
+                error.message ?: error.javaClass.simpleName
+            }
+            runOnUiThread {
+                if (outcome == null) finishReport(id, VoiceDegraded.SENT) else finishReport(id, VoiceDegraded.failed(outcome))
+            }
+        }, "dshnc-voice-report").start()
+    }
+
+    private fun finishReport (id: String, text: String) {
+        VoiceChatBus.reportResult(id, text)
+        store.addEvent(if (text == VoiceDegraded.SENT) "bug-report" else "bug-report-fail", "$id $text")
+        renderChat()
     }
 
     /** A small grey line under a remark: a caption, never a remark of its own. */

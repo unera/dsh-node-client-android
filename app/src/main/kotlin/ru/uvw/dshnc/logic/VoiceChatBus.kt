@@ -30,7 +30,8 @@ object VoiceChatBus {
         text: String,
         who: VoiceChat.Whom? = null,
         parts: List<AnswerPart> = emptyList(),
-    ): VoiceChatLog.Change = synchronized(lock) { log.put(id, role, text, who, parts) }
+        degraded: VoiceDegraded.Report? = null,
+    ): VoiceChatLog.Change = synchronized(lock) { log.put(id, role, text, who, parts, degraded) }
 
     /** A line from the host: the transcript of a take, or the answer. */
     fun put (id: String, role: VoiceChat.Role, text: String, who: VoiceChat.Whom? = null): VoiceChatLog.Change {
@@ -46,6 +47,9 @@ object VoiceChatBus {
 
     /** A caption under the person's line, until the transcript replaces it. */
     fun note (id: String, text: String): Boolean = synchronized(lock) { log.note(id, text) }
+
+    /** What came of a bug report: shown instead of the line's button. */
+    fun reportResult (id: String, text: String): Boolean = synchronized(lock) { log.reportResult(id, text) }
 
     /** A remark the screen makes about itself. */
     fun system (text: String, id: String = "") {
