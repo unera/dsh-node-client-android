@@ -1461,3 +1461,128 @@ class VoiceDegradedTest {
         assertEquals(false, log.reportResult("нет-такого", "x"))
     }
 }
+
+/**
+ * A take that did not arrive can be sent again without saying it twice.
+ */
+class VoiceParkedTest {
+    private fun file (name: String = "voice-1.wav"): java.io.File {
+        val dir = java.nio.file.Files.createTempDirectory("parked").toFile()
+        return java.io.File(dir, name).apply { writeBytes(ByteArray(2048) { 3 }) }
+    }
+
+    @Test
+    fun `the parked take keeps its file, its id and its duration`() {
+        ru.uvw.dshnc.logic.VoiceParked.clear()
+        val take = file()
+        ru.uvw.dshnc.logic.VoiceParked.remember(take, 2.5, "ex-7", "ptt")
+        val parked = ru.uvw.dshnc.logic.VoiceParked.snapshot()
+        assertEquals("ex-7", parked?.id)
+        assertEquals(2.5, parked!!.seconds, 0.0001)
+        assertEquals(take.absolutePath, parked.file.absolutePath)
+        assertTrue(parked.file.isFile)
+        ru.uvw.dshnc.logic.VoiceParked.clear()
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceParked.snapshot())
+        assertTrue("после успеха файл удаляется", !take.exists())
+    }
+
+    @Test
+    fun `a second tap while sending is refused`() {
+        ru.uvw.dshnc.logic.VoiceParked.clear()
+        ru.uvw.dshnc.logic.VoiceParked.remember(file(), 1.0, "ex-8", "ptt")
+        assertTrue(ru.uvw.dshnc.logic.VoiceParked.beginSend())
+        assertTrue(ru.uvw.dshnc.logic.VoiceParked.isSending())
+        // the link is inert until the attempt settles
+        assertEquals(false, ru.uvw.dshnc.logic.VoiceParked.beginSend())
+        ru.uvw.dshnc.logic.VoiceParked.endSend()
+        assertTrue(ru.uvw.dshnc.logic.VoiceParked.beginSend())
+        ru.uvw.dshnc.logic.VoiceParked.endSend()
+        ru.uvw.dshnc.logic.VoiceParked.clear()
+    }
+
+    @Test
+    fun `nothing to send is not a send`() {
+        ru.uvw.dshnc.logic.VoiceParked.clear()
+        assertEquals(false, ru.uvw.dshnc.logic.VoiceParked.beginSend())
+    }
+}
+
+/**
+ * The offer lives in the conversation line, and disappears once the host has the take.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceResendLinkTest {
+    @Test
+    fun `the link is next to the note, and gone after success`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        val dir = org.robolectric.RuntimeEnvironment.getApplication().cacheDir
+        val take = java.io.File(dir, "voice-resend.wav").apply { writeBytes(ByteArray(2048)) }
+        try {
+            ru.uvw.dshnc.logic.VoiceParked.remember(take, 1.5, "ex-9", "ptt")
+            ru.uvw.dshnc.logic.VoiceChatBus.system(
+                ru.uvw.dshnc.logic.VoiceFailure.SAVED_LOCALLY,
+                "ex-9",
+                resend = true,
+            )
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            fun texts (): List<String> {
+                val found = mutableListOf<String>()
+                fun walk (view: android.view.View) {
+                    if (view is android.widget.TextView) found.add(view.text?.toString().orEmpty())
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+                }
+                walk(screen.findViewById(android.R.id.content))
+                return found
+            }
+            val first = texts()
+            assertTrue("на экране: $first", first.contains(ru.uvw.dshnc.logic.VoiceFailure.SAVED_LOCALLY))
+            assertTrue("на экране: $first", first.contains("переотправить"))
+
+            // the repeat succeeded: the line becomes the receipt and the offer disappears
+            ru.uvw.dshnc.logic.VoiceChatBus.resendText(ru.uvw.dshnc.logic.VoiceStatus.accepted(1.5))
+            ru.uvw.dshnc.logic.VoiceChatBus.dropResend()
+            render.invoke(screen)
+            val after = texts()
+            val logState = ru.uvw.dshnc.logic.VoiceChatBus.snapshot().map { "${it.text}/${it.resend}" }
+            assertTrue("лог: $logState, экран: $after", after.contains("принято хостом · 1.5 с"))
+            assertTrue("лог: $logState, экран: $after", !after.contains("переотправить"))
+        } finally {
+            ru.uvw.dshnc.logic.VoiceParked.clear()
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `while sending the link says so and cannot be tapped`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        val dir = org.robolectric.RuntimeEnvironment.getApplication().cacheDir
+        try {
+            ru.uvw.dshnc.logic.VoiceParked.remember(java.io.File(dir, "voice-x.wav").apply { writeBytes(ByteArray(8)) }, 1.0, "ex-10", "ptt")
+            ru.uvw.dshnc.logic.VoiceChatBus.system(ru.uvw.dshnc.logic.VoiceFailure.SAVED_LOCALLY, "ex-10", resend = true)
+            assertTrue(ru.uvw.dshnc.logic.VoiceParked.beginSend())
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val texts = mutableListOf<String>()
+            var clickable = true
+            fun walk (view: android.view.View) {
+                if (view is android.widget.TextView) {
+                    texts.add(view.text?.toString().orEmpty())
+                    if (view.text == "отправляю…") clickable = view.isClickable
+                }
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            assertTrue(texts.contains("отправляю…"))
+            assertEquals("во время отправки ссылка неактивна", false, clickable)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceParked.endSend()
+            ru.uvw.dshnc.logic.VoiceParked.clear()
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+}

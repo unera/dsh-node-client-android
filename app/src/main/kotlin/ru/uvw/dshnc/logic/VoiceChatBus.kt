@@ -52,10 +52,16 @@ object VoiceChatBus {
     fun reportResult (id: String, text: String): Boolean = synchronized(lock) { log.reportResult(id, text) }
 
     /** A remark the screen makes about itself. */
-    fun system (text: String, id: String = "") {
-        synchronized(lock) { log.system(text, id) }
+    fun system (text: String, id: String = "", resend: Boolean = false) {
+        synchronized(lock) { log.system(text, id, resend) }
         onChanged?.invoke()
     }
+
+    /** The outcome of a repeat, in the same line that offered it. */
+    fun resendText (text: String): Boolean = synchronized(lock) { log.resendText(text) }
+
+    /** The take is accepted: no more offers to resend. */
+    fun dropResend (): Boolean = synchronized(lock) { log.dropResend() }
 
     /** Forget everything: used by tests and by a node that is re-paired. */
     fun clear () {

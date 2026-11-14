@@ -37,6 +37,7 @@ import ru.uvw.dshnc.logic.VoiceFailure
 import ru.uvw.dshnc.logic.VoiceFiles
 import ru.uvw.dshnc.logic.VoiceInbox
 import ru.uvw.dshnc.logic.VoiceOutbox
+import ru.uvw.dshnc.logic.VoiceParked
 import ru.uvw.dshnc.logic.VoiceTake
 import ru.uvw.dshnc.logic.VoiceUpload
 import ru.uvw.dshnc.store.TokenStore
@@ -103,6 +104,8 @@ class VoiceChatActivity : AppCompatActivity() {
     private var recording = false
     /** The last outcome, shown in the fixed status line until the person does something new. */
     private var status: String? = null
+    /** The exchange id of the take being sent: a repeat must keep it, or the host counts two. */
+    private var lastTakeId: String = ""
     /** The «down» button, shown only when the person has scrolled away from the newest line. */
     private lateinit var downButton: TextView
     /** True while the person is reading history: new lines must not yank the view away. */
@@ -548,7 +551,7 @@ class VoiceChatActivity : AppCompatActivity() {
         val base = store.base
         val token = store.token
         if (base == null || token == null) {
-            refuse(take, "узел не подключён к хосту")
+            refuse(take, "узел не подключён к хосту", null, id)
             return
         }
         Thread({
@@ -575,7 +578,7 @@ class VoiceChatActivity : AppCompatActivity() {
                         store.addEvent("voice принято", VoiceStatus.logDetails(caption, outcome.path))
                         show(caption)
                     }
-                    is VoiceUpload.Result.Failed -> refuse(take, outcome.reason, outcome.status)
+                    is VoiceUpload.Result.Failed -> refuse(take, outcome.reason, outcome.status, id)
                 }
             }
         }, "dshnc-voice-send").start()
@@ -588,7 +591,7 @@ class VoiceChatActivity : AppCompatActivity() {
      * A refused request gets the server's own sentence back; a broken connection gets «плохая
      * связь» and a quiet second line saying the recording is still on the phone.
      */
-    private fun refuse (take: Recorder.Result, reason: String, status: Int? = null) {
+    private fun refuse (take: Recorder.Result, reason: String, status: Int? = null, takeId: String = lastTakeId) {
         val directory = VoiceFiles.directory(store.roots, filesDir)
         val target = File(directory, take.file.name)
         val parked = runCatching {
@@ -599,10 +602,16 @@ class VoiceChatActivity : AppCompatActivity() {
             target
         }.getOrElse { take.file }
         VoiceOutbox.offer(VoiceOutbox.Recording(parked, take.seconds, mode.wire))
+        // the take stays available for another attempt, with the id it was born with
+        VoiceParked.remember(parked, take.seconds, takeId, mode.wire)
+        lastTakeId = takeId
         // the path stays in the log: on screen it read like a fault
         store.addEvent("voice не принято", VoiceStatus.logDetails("$status $reason", parked.absolutePath))
         addLine(VoiceFailure.line(status, reason))
-        VoiceFailure.note(status, reason)?.let { note -> addLine(note) }
+        // the second line offers to send the very same take again: the file is here, and the id
+        // makes a second attempt harmless if the first one actually arrived
+        VoiceFailure.note(status, reason)?.let { note -> VoiceChatBus.system(note, takeId, resend = true) }
+        renderChat()
         show(VoiceFailure.line(status, reason))
     }
 
@@ -835,6 +844,8 @@ class VoiceChatActivity : AppCompatActivity() {
         }
         // captions live inside the bubble: they belong to the remark above them
         entry.note?.let { note -> bubble.addView(caption(note)) }
+        // and the offer to send the saved take again, right under that note
+        if (entry.resend) bubble.addView(resendLink())
         entry.steps?.takeIf { it > 0 }?.let { count -> bubble.addView(caption("шагов: $count")) }
 
         if (entry.role == VoiceChat.Role.ASSISTANT) row.addView(avatar(entry.who))
@@ -984,6 +995,73 @@ class VoiceChatActivity : AppCompatActivity() {
     private fun finishReport (id: String, text: String) {
         VoiceChatBus.reportResult(id, text)
         store.addEvent(if (text == VoiceDegraded.SENT) "bug-report" else "bug-report-fail", "$id $text")
+        renderChat()
+    }
+
+    /**
+     * «переотправить» next to the note about the saved take.
+     *
+     * It is a word, not a button: the same 12 sp as the line above it, underlined and blue, so a
+     * person sees the offer without it competing with the answer. While an attempt runs it says
+     * «отправляю…» and does nothing, because two attempts with one id are a waste at best.
+     */
+    private fun resendLink (): TextView {
+        val density = resources.displayMetrics.density
+        val sending = VoiceParked.isSending()
+        return TextView(this).apply {
+            text = if (sending) "отправляю…" else "переотправить"
+            textSize = 12f
+            setTextColor(Color.parseColor("#93c5fd"))
+            if (!sending) paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+            setPadding(0, (2 * density).toInt(), 0, 0)
+            isClickable = !sending
+            if (!sending) setOnClickListener { resendParked() }
+        }
+    }
+
+    /**
+     * Send the parked take again, with the id it was born with.
+     *
+     * Nothing is recorded anew: the file and the exchange are the same, so the host can tell a
+     * repeat from a new remark.
+     */
+    private fun resendParked () {
+        val take = VoiceParked.snapshot() ?: return
+        if (!VoiceParked.beginSend()) return
+        renderChat()
+        val base = store.base
+        val token = store.token
+        if (base == null || token == null) {
+            VoiceParked.endSend()
+            showResendResult(VoiceFailure.line(null, "узел не подключён к хосту"), false)
+            return
+        }
+        Thread({
+            val times = VoiceUpload.Times(sentAt = System.currentTimeMillis())
+            val outcome = VoiceEvents(base, token)
+                .sendVoice(take.file, take.seconds, take.id, times, store.voiceSynth)
+            runOnUiThread {
+                VoiceParked.endSend()
+                when (outcome) {
+                    is VoiceUpload.Result.Accepted -> {
+                        // the host has it: the copy on the phone has done its job
+                        VoiceParked.clear()
+                        // the line becomes the receipt, and only then loses its offer
+                        showResendResult(VoiceStatus.accepted(outcome.seconds ?: take.seconds), true)
+                        VoiceChatBus.dropResend()
+                    }
+                    is VoiceUpload.Result.Failed ->
+                        showResendResult(VoiceFailure.line(outcome.status, outcome.reason), false)
+                }
+                renderChat()
+            }
+        }, "dshnc-voice-resend").start()
+    }
+
+    /** The same line tells the outcome: accepted, or a new reason with the offer kept. */
+    private fun showResendResult (text: String, accepted: Boolean) {
+        VoiceChatBus.resendText(text)
+        store.addEvent(if (accepted) "voice повтор принят" else "voice повтор не принят", text)
         renderChat()
     }
 

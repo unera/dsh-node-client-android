@@ -136,6 +136,8 @@ class VoiceChatLog (private val limit: Int = 200) {
         val degraded: VoiceDegraded.Report? = null,
         /** What came of the bug report: null — not sent yet, `SENT`, or the refusal. */
         val report: String? = null,
+        /** A note that offers to send the parked take again. */
+        val resend: Boolean = false,
     )
 
     /** What a write did, so the screen knows how much to redraw. */
@@ -226,9 +228,26 @@ class VoiceChatLog (private val limit: Int = 200) {
     }
 
     /** A line the screen writes itself: a refusal, a note, never part of the exchange. */
-    fun system (text: String, id: String = "") {
-        items.add(Entry(id, VoiceChat.Role.SYSTEM, text))
+    fun system (text: String, id: String = "", resend: Boolean = false) {
+        items.add(Entry(id, VoiceChat.Role.SYSTEM, text, resend = resend))
         trim()
+    }
+
+    /** Replace the text of the last resend note: its outcome, in the same line. */
+    fun resendText (text: String): Boolean {
+        // the note keeps its place after the offer is dropped, so the last system line is the one
+        val index = items.indexOfLast { it.role == VoiceChat.Role.SYSTEM }
+        if (index < 0) return false
+        items[index] = items[index].copy(text = text)
+        return true
+    }
+
+    /** The take was accepted: the offer to resend has nothing left to offer. */
+    fun dropResend (): Boolean {
+        val index = items.indexOfLast { it.resend }
+        if (index < 0) return false
+        items[index] = items[index].copy(resend = false)
+        return true
     }
 
     /** Drop every line: a re-paired node starts a new conversation. */
