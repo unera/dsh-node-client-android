@@ -108,34 +108,11 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(toggle)
 
-        // quick functions: one row of square buttons, smaller than the connection toggle and
-        // larger than the menu rows. The row exists so the next one is added beside this one,
-        // not on top of it.
-        root.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            val size = pad * 4
-            addView(TextView(this@MainActivity).apply {
-                text = "🎤"
-                textSize = 30f
-                gravity = Gravity.CENTER
-                contentDescription = getString(R.string.voice_chat_title)
-                layoutParams = LinearLayout.LayoutParams(size, size).apply { setMargins(0, pad / 2, 0, 0) }
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = 20 * resources.displayMetrics.density
-                    setColor(Color.parseColor("#1f2937"))
-                }
-                isClickable = true
-                isFocusable = true
-                setOnClickListener {
-                    try {
-                        startActivity(Intent(this@MainActivity, VoiceChatActivity::class.java))
-                    } catch (error: Throwable) {
-                        status.text = "голосовой чат: ${error.message}"
-                    }
-                }
-            })
+        // the voice screen is not one of the quick functions: it is the one button a person
+        // reaches for without looking, so it sits at the bottom of the screen on its own, while
+        // the row of quick functions will grow above it.
+        root.addView(android.view.View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         })
 
         status = TextView(this).apply {
@@ -161,6 +138,33 @@ class MainActivity : AppCompatActivity() {
         }
         linkRow.addView(Ui.button(this, getString(R.string.menu_scan_qr)) { startScanner() })
         root.addView(linkRow)
+
+        val voiceSize = (80 * resources.displayMetrics.density).toInt()
+        val voiceMargin = (16 * resources.displayMetrics.density).toInt()
+        root.addView(TextView(this).apply {
+            text = "🎤"
+            textSize = 30f
+            gravity = Gravity.CENTER
+            contentDescription = getString(R.string.voice_chat_title)
+            layoutParams = LinearLayout.LayoutParams(voiceSize, voiceSize).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                setMargins(0, voiceMargin, 0, voiceMargin)
+            }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 20 * resources.displayMetrics.density
+                setColor(Color.parseColor("#1f2937"))
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                try {
+                    startActivity(Intent(this@MainActivity, VoiceChatActivity::class.java))
+                } catch (error: Throwable) {
+                    status.text = "голосовой чат: ${error.message}"
+                }
+            }
+        })
 
         setContentView(root)
 
