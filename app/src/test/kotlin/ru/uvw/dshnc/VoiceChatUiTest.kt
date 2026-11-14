@@ -1673,3 +1673,61 @@ class VoiceWarmupTest {
         }
     }
 }
+
+/**
+ * The main screen: the text block right under the big button, the microphone at the bottom.
+ */
+@RunWith(RobolectricTestRunner::class)
+class MainScreenOrderTest {
+    private fun screen(): MainActivity =
+        org.robolectric.Robolectric.buildActivity(MainActivity::class.java).setup().get()
+
+    @Test
+    fun `the status block follows the button and the microphone closes the screen`() {
+        val screen = screen()
+        try {
+            val content = screen.findViewById<android.view.ViewGroup>(android.R.id.content)
+            val root = content.getChildAt(0) as android.view.ViewGroup
+            val order = (0 until root.childCount).map { root.getChildAt(it) }
+            // the big button is the round toggle with a drawable; the text block is the one right
+            // after it, and the microphone is the last child
+            val microphone = order.last()
+            assertEquals("микрофон должен быть последним", "🎤", (microphone as android.widget.TextView).text)
+            val micIndex = order.size - 1
+
+            val texts = order.take(micIndex).filterIsInstance<android.widget.TextView>()
+                .map { it.text?.toString().orEmpty() }
+            // the timer counter and the status/details text both exist before the microphone
+            assertTrue("нет блока статуса", texts.isNotEmpty())
+            // and the status block is above the free space: no weighted spacer before it
+            val firstSpacer = order.indexOfFirst {
+                (it.layoutParams as? android.widget.LinearLayout.LayoutParams)?.weight == 1f
+            }
+            assertTrue("свободное место должно быть ниже текста, а не выше", firstSpacer > 0)
+            val statusIndex = order.indexOfFirst {
+                it is android.widget.TextView && (it.text?.toString().orEmpty().contains("версия") ||
+                    (it.layoutParams as android.widget.LinearLayout.LayoutParams).weight == 0f && it.alpha < 1f)
+            }
+            assertTrue("статус должен идти раньше свободного места", statusIndex in 1 until firstSpacer)
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `the microphone stays pinned to the bottom with a 16 dp margin`() {
+        val screen = screen()
+        try {
+            val content = screen.findViewById<android.view.ViewGroup>(android.R.id.content)
+            val root = content.getChildAt(0) as android.view.ViewGroup
+            val microphone = root.getChildAt(root.childCount - 1) as android.widget.TextView
+            val lp = microphone.layoutParams as android.widget.LinearLayout.LayoutParams
+            val density = screen.resources.displayMetrics.density
+            assertEquals("отступ микрофона от низа", (16 * density).toInt(), lp.bottomMargin)
+            assertEquals((80 * density).toInt(), lp.width)
+            assertEquals(lp.width, lp.height)
+        } finally {
+            screen.finish()
+        }
+    }
+}

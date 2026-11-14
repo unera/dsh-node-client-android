@@ -108,17 +108,13 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(toggle)
 
-        // the voice screen is not one of the quick functions: it is the one button a person
-        // reaches for without looking, so it sits at the bottom of the screen on its own, while
-        // the row of quick functions will grow above it.
-        root.addView(android.view.View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-        })
-
+        // the status block belongs right under the big button, as it always was: only the
+        // microphone was meant to move to the bottom of the screen
         status = TextView(this).apply {
             textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, pad, 0, pad)
+            val gap = (24 * resources.displayMetrics.density).toInt()
+            setPadding(0, gap, 0, pad)
         }
         root.addView(status)
 
@@ -138,6 +134,12 @@ class MainActivity : AppCompatActivity() {
         }
         linkRow.addView(Ui.button(this, getString(R.string.menu_scan_qr)) { startScanner() })
         root.addView(linkRow)
+
+        // whatever is left goes between the text and the microphone: the button stays pinned to
+        // the bottom edge, the text stays where it belongs
+        root.addView(android.view.View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        })
 
         val voiceSize = (80 * resources.displayMetrics.density).toInt()
         val voiceMargin = (16 * resources.displayMetrics.density).toInt()
