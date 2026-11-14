@@ -164,3 +164,38 @@ class VoiceChatTest {
         assertEquals("заметка 2", log.snapshot()[0].text)
     }
 }
+
+/**
+ * A press that lasted a fifth of a second is not a remark: sending it costs a round trip and
+ * produces an answer to a question nobody asked (a live run came back «良いです。»).
+ */
+class VoiceTakeTest {
+    @Test
+    fun `a tap of two tenths of a second is refused` () {
+        assertEquals("слишком коротко, не отправлено", ru.uvw.dshnc.logic.VoiceTake.rejectReason(0.2, 20_000))
+    }
+
+    @Test
+    fun `half a second is a word and goes through` () {
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceTake.rejectReason(0.5, 32_000))
+    }
+
+    @Test
+    fun `the boundary is exactly four tenths` () {
+        // just below the threshold is still a tap, at the threshold it is a take
+        assertEquals("слишком коротко, не отправлено", ru.uvw.dshnc.logic.VoiceTake.rejectReason(0.399, 20_000))
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceTake.rejectReason(ru.uvw.dshnc.logic.VoiceTake.MIN_SECONDS, 20_000))
+    }
+
+    @Test
+    fun `a long take with almost no bytes is silence, not speech` () {
+        assertEquals("ничего не сказано, не отправлено", ru.uvw.dshnc.logic.VoiceTake.rejectReason(2.0, 1_500))
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceTake.rejectReason(2.0, ru.uvw.dshnc.logic.VoiceTake.MIN_BYTES))
+    }
+
+    @Test
+    fun `a nonsensical duration is refused rather than sent` () {
+        assertEquals("слишком коротко, не отправлено", ru.uvw.dshnc.logic.VoiceTake.rejectReason(0.0, 20_000))
+        assertEquals("слишком коротко, не отправлено", ru.uvw.dshnc.logic.VoiceTake.rejectReason(Double.NaN, 20_000))
+    }
+}

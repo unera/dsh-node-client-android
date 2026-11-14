@@ -11,8 +11,8 @@ android {
         applicationId = "ru.uvw.dshnc"
         minSdk = 33
         targetSdk = 34
-        versionCode = 121
-        versionName = "0.10.28"
+        versionCode = 122
+        versionName = "0.10.29"
     }
 
     signingConfigs {

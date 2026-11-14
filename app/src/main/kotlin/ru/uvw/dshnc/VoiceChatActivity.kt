@@ -25,6 +25,7 @@ import ru.uvw.dshnc.logic.VoiceChatLog
 import ru.uvw.dshnc.logic.VoiceFiles
 import ru.uvw.dshnc.logic.VoiceInbox
 import ru.uvw.dshnc.logic.VoiceOutbox
+import ru.uvw.dshnc.logic.VoiceTake
 import ru.uvw.dshnc.logic.VoiceUpload
 import ru.uvw.dshnc.store.TokenStore
 import java.io.File
@@ -283,6 +284,16 @@ class VoiceChatActivity : AppCompatActivity() {
         if (take == null) {
             renderIdle()
             show("слишком коротко, не отправлено")
+            return
+        }
+        // a mistaken tap must not become a turn: the recognizer hears something in any noise, and
+        // an answer to a question nobody asked is worse than no answer at all
+        val refuseShort = VoiceTake.rejectReason(take.seconds, take.file.length())
+        if (refuseShort != null) {
+            runCatching { take.file.delete() }
+            renderIdle()
+            setState("готов")
+            show(refuseShort)
             return
         }
         val stoppedAt = System.currentTimeMillis()
