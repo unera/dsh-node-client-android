@@ -40,6 +40,7 @@ import ru.uvw.dshnc.logic.VoiceOutbox
 import ru.uvw.dshnc.logic.VoiceParked
 import ru.uvw.dshnc.logic.VoiceTake
 import ru.uvw.dshnc.logic.VoiceUpload
+import ru.uvw.dshnc.logic.VoiceWarmup
 import ru.uvw.dshnc.store.TokenStore
 import java.io.File
 
@@ -1137,6 +1138,9 @@ class VoiceChatActivity : AppCompatActivity() {
         super.onResume()
         // coming back to a screen that was in the background: the queue kept the lines, drain them
         VoiceInbox.onPosted = { runOnUiThread { drainInbox() } }
+        // the host's synthesizer sleeps after ten minutes of silence and takes seconds to wake:
+        // one knock on entering the screen saves the first sentence those seconds
+        VoiceWarmup.fire(store.base, store.token, store.voiceSynth)
         scrolledAway = false
         downButton.visibility = View.GONE
         drainInbox()

@@ -1586,3 +1586,90 @@ class VoiceResendLinkTest {
         }
     }
 }
+
+/**
+ * Waking the host's synthesizer: once per visit, only when the host is the one who speaks, and
+ * never at the cost of a visible step.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceWarmupTest {
+    private fun app(): android.content.Context = org.robolectric.RuntimeEnvironment.getApplication()
+
+    private fun screen (synth: String): VoiceChatActivity {
+        val store = ru.uvw.dshnc.store.TokenStore(app())
+        store.base = "https://dsh.example"
+        store.token = "token"
+        store.voiceSynth = synth
+        return org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+    }
+
+    @Test
+    fun `the body is the agreed event`() {
+        assertEquals("{\"type\":\"voice-warmup\"}", ru.uvw.dshnc.logic.VoiceWarmup.body().toString())
+    }
+
+    @Test
+    fun `host mode sends one wake-up per visit, device mode sends none`() {
+        ru.uvw.dshnc.logic.VoiceWarmup.reset()
+        var sent = 0
+        ru.uvw.dshnc.logic.VoiceWarmup.transport = { _, _ -> sent += 1 }
+        try {
+            val host = screen("host")
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(150)
+            host.finish()
+            assertEquals("в режиме host должен уйти ровно один запрос", 1, sent)
+
+            // a second entry inside half a minute must not knock again
+            val again = screen("host")
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(150)
+            again.finish()
+            assertEquals("повторный вход в течение 30 с не шлёт", 1, sent)
+
+            ru.uvw.dshnc.logic.VoiceWarmup.reset()
+            val device = screen("device")
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(150)
+            device.finish()
+            assertEquals("в режиме device будить нечего", 1, sent)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceWarmup.transport = null
+            ru.uvw.dshnc.logic.VoiceWarmup.reset()
+        }
+    }
+
+    @Test
+    fun `the throttle forgets after half a minute`() {
+        ru.uvw.dshnc.logic.VoiceWarmup.reset()
+        var sent = 0
+        ru.uvw.dshnc.logic.VoiceWarmup.transport = { _, _ -> sent += 1 }
+        try {
+            assertTrue(ru.uvw.dshnc.logic.VoiceWarmup.fire("https://dsh.example", "t", "host", now = 1_000_000))
+            assertTrue(!ru.uvw.dshnc.logic.VoiceWarmup.fire("https://dsh.example", "t", "host", now = 1_010_000))
+            assertTrue(ru.uvw.dshnc.logic.VoiceWarmup.fire("https://dsh.example", "t", "host", now = 1_030_000))
+            Thread.sleep(150)
+            assertEquals(2, sent)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceWarmup.transport = null
+            ru.uvw.dshnc.logic.VoiceWarmup.reset()
+        }
+    }
+
+    @Test
+    fun `a failing wake-up changes nothing on the screen`() {
+        ru.uvw.dshnc.logic.VoiceWarmup.reset()
+        ru.uvw.dshnc.logic.VoiceWarmup.transport = { _, _ -> throw IllegalStateException("нет сети") }
+        try {
+            val host = screen("host")
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(150)
+            // the conversation is empty and the status line says nothing about the failure
+            assertEquals(0, ru.uvw.dshnc.logic.VoiceChatBus.snapshot().size)
+            host.finish()
+        } finally {
+            ru.uvw.dshnc.logic.VoiceWarmup.transport = null
+            ru.uvw.dshnc.logic.VoiceWarmup.reset()
+        }
+    }
+}
