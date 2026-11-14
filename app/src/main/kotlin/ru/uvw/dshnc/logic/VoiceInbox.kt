@@ -23,6 +23,8 @@ object VoiceInbox {
             val text: String,
             /** Who answers, when the host sent it with the line. */
             val who: VoiceChat.Whom? = null,
+            /** The short form of an answer, when the host sent one for the ear. */
+            val speak: String? = null,
         ) : Item()
 
         /** A step of the model's work: shown in one line that replaces the previous one. */

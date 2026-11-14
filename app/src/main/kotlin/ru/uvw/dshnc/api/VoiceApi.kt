@@ -402,7 +402,7 @@ class VoiceApi (private val context: Context) {
             is String -> whoArg.trim().takeIf { it.isNotEmpty() }?.let { VoiceChat.Whom(it) }
             else -> null
         }
-        VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text, who))
+        VoiceInbox.post(VoiceInbox.Item.Chat(id, role, text, who, speak.takeIf { it.isNotBlank() }))
         if (say || audio != null) {
             speaker.submit(VoiceSpeaker.Task(id = id, text = spokenText, audio = audio, seq = seq))
         }

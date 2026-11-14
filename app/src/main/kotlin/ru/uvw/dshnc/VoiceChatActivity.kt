@@ -20,6 +20,9 @@ import ru.uvw.dshnc.api.NodeApi
 import ru.uvw.dshnc.logic.Recorder
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.api.VoiceEvents
+import ru.uvw.dshnc.logic.AnswerMode
+import ru.uvw.dshnc.logic.AnswerPart
+import ru.uvw.dshnc.logic.VoiceAnswer
 import ru.uvw.dshnc.logic.VoiceBubble
 import ru.uvw.dshnc.logic.VoiceChat
 import ru.uvw.dshnc.logic.VoiceChatUi
@@ -283,7 +286,23 @@ class VoiceChatActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#1f2937"))
             setPadding(0, (8 * density).toInt(), 0, (8 * density).toInt())
         }
-        for (item in VoiceMenu.items(mode)) {
+        for (item in VoiceMenu.items(mode, AnswerMode.of(store.answerMode))) {
+            if (item.separator) {
+                rows.addView(TextView(this).apply {
+                    text = item.title
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#6b7280"))
+                    setPadding((16 * density).toInt(), (12 * density).toInt(), (16 * density).toInt(), (4 * density).toInt())
+                })
+                rows.addView(android.view.View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        (1 * density).toInt(),
+                    ).apply { setMargins((16 * density).toInt(), (6 * density).toInt(), (16 * density).toInt(), (6 * density).toInt()) }
+                    setBackgroundColor(Color.parseColor("#4b5563"))
+                })
+                continue
+            }
             rows.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -338,6 +357,12 @@ class VoiceChatActivity : AppCompatActivity() {
     private fun onMenuItem (id: String) {
         VoiceMenu.modeOf(id)?.let { next ->
             selectMode(next)
+            return
+        }
+        VoiceMenu.answerModeOf(id)?.let { next ->
+            store.answerMode = next.wire
+            // redraw the conversation: the forms of every answer change with the setting
+            renderChat()
             return
         }
         if (id == VoiceMenu.NEW_SESSION) newSession()
@@ -555,7 +580,12 @@ class VoiceChatActivity : AppCompatActivity() {
         for (item in items) {
             when (item) {
                 is VoiceInbox.Item.Chat -> {
-                    VoiceChatBus.putQuiet(item.id, item.role, item.text, item.who?.name)
+                    val parts = if (item.role == VoiceChat.Role.ASSISTANT) {
+                        VoiceAnswer.compose(item.text, item.speak, AnswerMode.of(store.answerMode))
+                    } else {
+                        emptyList()
+                    }
+                    VoiceChatBus.putQuiet(item.id, item.role, item.text, item.who?.name, parts)
                     item.who?.let { who ->
                         if (who != assistantWho) {
                             assistantWho = who
@@ -652,20 +682,40 @@ class VoiceChatActivity : AppCompatActivity() {
 
         val size = if (entry.role == VoiceChat.Role.SYSTEM) 13f else 18f
         val color = Color.parseColor(VoiceBubble.textColor(entry.role))
-        // prose is drawn as it came; fenced runs are monospaced on a field darker than the bubble
-        for (segment in VoiceChat.segments(entry.text)) {
-            bubble.addView(TextView(this).apply {
-                text = segment.text
+        val parts = entry.parts.ifEmpty { listOf(AnswerPart(AnswerPart.Kind.TEXT, entry.text)) }
+        for (part in parts) {
+            if (part.kind == AnswerPart.Kind.DIVIDER) {
+                // the line between the short and the long form: a rule, not a character
+                bubble.addView(android.view.View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        (140 * density).toInt(),
+                        (1 * density).toInt(),
+                    ).apply { setMargins(0, (8 * density).toInt(), 0, (8 * density).toInt()) }
+                    setBackgroundColor(Color.parseColor("#4b5563"))
+                })
+                continue
+            }
+            val view = TextView(this).apply {
                 textSize = size
                 setTextColor(color)
                 maxWidth = bubbleMaxWidth
-                if (segment.code) {
-                    typeface = android.graphics.Typeface.MONOSPACE
-                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, size - 3f)
-                    setBackgroundColor(Color.parseColor(VoiceBubble.CODE_BACKGROUND))
-                    setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
-                }
-            })
+            }
+            if (entry.role == VoiceChat.Role.ASSISTANT) {
+                // the model writes markdown almost always; raw ** and | in a bubble read as noise
+                markdown.setMarkdown(view, part.text)
+            } else {
+                // the person's own words and the screen's notes stay exactly as typed
+                view.text = part.text
+            }
+            if (hasTable(part.text)) {
+                // a wide table must scroll on its own, not stretch the conversation
+                bubble.addView(android.widget.HorizontalScrollView(this).apply {
+                    isHorizontalScrollBarEnabled = true
+                    addView(view)
+                })
+            } else {
+                bubble.addView(view)
+            }
         }
         // captions live inside the bubble: they belong to the remark above them
         entry.note?.let { note -> bubble.addView(caption(note)) }
@@ -674,6 +724,22 @@ class VoiceChatActivity : AppCompatActivity() {
         row.addView(bubble)
         return row
     }
+
+    /**
+     * The markdown renderer.
+     *
+     * Built once per screen: it holds the theme (code on a darker field, links in blue) and the
+     * table plugin, and rebuilding it per line would be a lot of allocation for a chat.
+     */
+    private val markdown: io.noties.markwon.Markwon by lazy {
+        io.noties.markwon.Markwon.builder(this)
+            .usePlugin(io.noties.markwon.ext.tables.TablePlugin.create(this))
+            .build()
+    }
+
+    /** Does this text carry a table? Then its view has to scroll instead of stretching. */
+    private fun hasTable (text: String): Boolean =
+        text.lineSequence().any { line -> line.trimStart().startsWith("|") }
 
     /** A small grey line under a remark: a caption, never a remark of its own. */
     private fun caption (text: String): TextView {

@@ -84,7 +84,8 @@ class VoiceChatLayoutTest {
 class VoiceMenuTest {
     @Test
     fun `three rows in the order the person expects` () {
-        val items = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.PTT)
+        // the first group only: a new conversation and the two habits, the forms are a second group
+        val items = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.PTT).take(3)
         assertEquals(3, items.size)
         assertEquals(
             listOf("Новая сессия", "Держите и говорите", "Тапните для записи"),
@@ -98,7 +99,7 @@ class VoiceMenuTest {
 
     @Test
     fun `only the two habits carry a caption` () {
-        val items = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.TOGGLE)
+        val items = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.TOGGLE).take(3)
         assertEquals(null, items[0].subtitle)
         assertEquals("Говорите, удерживая кнопку с микрофоном нажатой.", items[1].subtitle)
         assertEquals(
@@ -109,9 +110,9 @@ class VoiceMenuTest {
 
     @Test
     fun `the current habit is marked, and only it`() {
-        val hold = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.PTT)
+        val hold = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.PTT).take(3)
         assertEquals(listOf(false, true, false), hold.map { it.checked })
-        val tap = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.TOGGLE)
+        val tap = ru.uvw.dshnc.logic.VoiceMenu.items(ru.uvw.dshnc.logic.VoiceMode.TOGGLE).take(3)
         assertEquals(listOf(false, false, true), tap.map { it.checked })
         // the action is never marked as a habit
         assertEquals(false, hold[0].checked)
@@ -592,5 +593,170 @@ class VoiceButtonShapeTest {
         } finally {
             screen.finish()
         }
+    }
+}
+
+/**
+ * The two forms of an answer and the three ways to show them.
+ */
+class VoiceAnswerTest {
+    private val long = "# Ответ\n\nГолосовое сообщение отправлено."
+    private val short = "Отправил."
+
+    @Test
+    fun `short shows the spoken form only`() {
+        val parts = ru.uvw.dshnc.logic.VoiceAnswer.compose(long, short, ru.uvw.dshnc.logic.AnswerMode.SHORT)
+        assertEquals(listOf("Отправил."), parts.map { it.text })
+        assertEquals(1, parts.size)
+    }
+
+    @Test
+    fun `long shows the written form only`() {
+        val parts = ru.uvw.dshnc.logic.VoiceAnswer.compose(long, short, ru.uvw.dshnc.logic.AnswerMode.LONG)
+        assertEquals(listOf(long), parts.map { it.text })
+    }
+
+    @Test
+    fun `both put a rule between the two forms`() {
+        val parts = ru.uvw.dshnc.logic.VoiceAnswer.compose(long, short, ru.uvw.dshnc.logic.AnswerMode.BOTH)
+        assertEquals(
+            listOf(
+                ru.uvw.dshnc.logic.AnswerPart.Kind.TEXT,
+                ru.uvw.dshnc.logic.AnswerPart.Kind.DIVIDER,
+                ru.uvw.dshnc.logic.AnswerPart.Kind.TEXT,
+            ),
+            parts.map { it.kind },
+        )
+        assertEquals(listOf("Отправил.", "", long), parts.map { it.text })
+    }
+
+    @Test
+    fun `identical forms are shown once, without a rule`() {
+        val same = "Готово."
+        val parts = ru.uvw.dshnc.logic.VoiceAnswer.compose(same, same, ru.uvw.dshnc.logic.AnswerMode.BOTH)
+        assertEquals(1, parts.size)
+        assertEquals("Готово.", parts.single().text)
+    }
+
+    @Test
+    fun `a missing form falls back to the other one`() {
+        assertEquals(
+            listOf(long),
+            ru.uvw.dshnc.logic.VoiceAnswer.compose(long, null, ru.uvw.dshnc.logic.AnswerMode.SHORT).map { it.text },
+        )
+        assertEquals(
+            listOf(short),
+            ru.uvw.dshnc.logic.VoiceAnswer.compose("", short, ru.uvw.dshnc.logic.AnswerMode.LONG).map { it.text },
+        )
+        // both with nothing to say stays empty rather than inventing a line
+        assertTrue(ru.uvw.dshnc.logic.VoiceAnswer.compose("", null, ru.uvw.dshnc.logic.AnswerMode.BOTH).isEmpty())
+    }
+
+    @Test
+    fun `the speech form prefers what was written for the ear`() {
+        assertEquals("Отправил.", ru.uvw.dshnc.logic.VoiceAnswer.speech(long, short))
+        assertEquals(long, ru.uvw.dshnc.logic.VoiceAnswer.speech(long, "  "))
+    }
+
+    @Test
+    fun `the stored mode survives, and defaults to the long form`() {
+        assertEquals(ru.uvw.dshnc.logic.AnswerMode.LONG, ru.uvw.dshnc.logic.AnswerMode.of(null))
+        assertEquals(ru.uvw.dshnc.logic.AnswerMode.LONG, ru.uvw.dshnc.logic.AnswerMode.of("nonsense"))
+        assertEquals(ru.uvw.dshnc.logic.AnswerMode.SHORT, ru.uvw.dshnc.logic.AnswerMode.of("SHORT"))
+        assertEquals(ru.uvw.dshnc.logic.AnswerMode.BOTH, ru.uvw.dshnc.logic.AnswerMode.of(" both "))
+    }
+}
+
+/**
+ * Markdown stops being visible: the model writes it, the person should not read asterisks.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceMarkdownTest {
+    @Test
+    fun `the answer is rendered, the person's own line is not`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        try {
+            ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
+            ru.uvw.dshnc.logic.VoiceInbox.clear()
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "m-1",
+                ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT,
+                "**жирный** и | a | b |\n| - | - |\n| 1 | 2 |\n```\nкод\n```",
+            )
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "m-1",
+                ru.uvw.dshnc.logic.VoiceChat.Role.USER,
+                "**это мои слова**",
+            )
+            val method = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            method.invoke(screen)
+            val texts = mutableListOf<String>()
+            fun walk (view: android.view.View) {
+                if (view is android.widget.TextView) texts.add(view.text?.toString().orEmpty())
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            val answer = texts.firstOrNull { it.contains("жирный") }.orEmpty()
+            assertTrue("markdown must be rendered: $answer", !answer.contains("**"))
+            // the person's own remark is kept as typed
+            assertTrue(texts.any { it.contains("**это мои слова**") })
+        } finally {
+            ru.uvw.dshnc.logic.VoiceInbox.onPosted = null
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+}
+
+/**
+ * The menu's second group, and the fact that the choice outlives the screen.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceAnswerMenuTest {
+    private fun app(): android.content.Context = org.robolectric.RuntimeEnvironment.getApplication()
+
+    @Test
+    fun `the answer group follows the modes behind a separator`() {
+        val items = ru.uvw.dshnc.logic.VoiceMenu.items(
+            ru.uvw.dshnc.logic.VoiceMode.PTT,
+            ru.uvw.dshnc.logic.AnswerMode.LONG,
+        )
+        assertEquals(7, items.size)
+        assertEquals("new-session", items[0].id)
+        assertEquals("mode-hold", items[1].id)
+        assertEquals("mode-tap", items[2].id)
+        assertTrue(items[3].separator)
+        assertEquals("Показывать ответы", items[3].title)
+        assertEquals(
+            listOf("Только короткую форму", "Только длинную форму", "Всё, с чертой между ними"),
+            items.drop(4).map { it.title },
+        )
+        // the habit is marked as well: «держать» is the default
+        assertEquals(listOf(false, true, false, false, false, true, false), items.map { it.checked })
+    }
+
+    @Test
+    fun `the chosen form is marked`() {
+        val items = ru.uvw.dshnc.logic.VoiceMenu.items(
+            ru.uvw.dshnc.logic.VoiceMode.PTT,
+            ru.uvw.dshnc.logic.AnswerMode.SHORT,
+        )
+        assertEquals(listOf(false, true, false, false, true, false, false), items.map { it.checked })
+        assertEquals(
+            ru.uvw.dshnc.logic.AnswerMode.BOTH,
+            ru.uvw.dshnc.logic.VoiceMenu.answerModeOf("answer-both"),
+        )
+        assertEquals(null, ru.uvw.dshnc.logic.VoiceMenu.answerModeOf("mode-hold"))
+    }
+
+    @Test
+    fun `the choice is remembered across a new screen`() {
+        val store = ru.uvw.dshnc.store.TokenStore(app())
+        assertEquals("long", store.answerMode)
+        store.answerMode = "both"
+        // a second store instance reads the same value: it survives a recreate
+        assertEquals("both", ru.uvw.dshnc.store.TokenStore(app()).answerMode)
+        store.answerMode = "long"
     }
 }

@@ -130,6 +130,8 @@ class VoiceChatLog (private val limit: Int = 200) {
         val steps: Int? = null,
         /** The assistant's name, on the first answer of an exchange only. */
         val who: String? = null,
+        /** The pieces to draw: the forms of an answer, with the line between them when both. */
+        val parts: List<AnswerPart> = emptyList(),
     )
 
     /** What a write did, so the screen knows how much to redraw. */
@@ -156,7 +158,13 @@ class VoiceChatLog (private val limit: Int = 200) {
      * @param text already clipped text.
      * @returns `REPLACED` when a placeholder became the transcript, `ADDED` otherwise.
      */
-    fun put (id: String, role: VoiceChat.Role, text: String, who: String? = null): Change {
+    fun put (
+        id: String,
+        role: VoiceChat.Role,
+        text: String,
+        who: String? = null,
+        parts: List<AnswerPart> = emptyList(),
+    ): Change {
         if (role == VoiceChat.Role.USER) {
             val index = items.indexOfLast { it.id == id && it.placeholder }
             if (index >= 0) {
@@ -177,7 +185,7 @@ class VoiceChatLog (private val limit: Int = 200) {
             items.any { it.id == id && it.role == VoiceChat.Role.ASSISTANT } -> null
             else -> who.trim()
         }
-        items.add(Entry(id, role, text, placeholder = false, steps = count, who = name))
+        items.add(Entry(id, role, text, placeholder = false, steps = count, who = name, parts = parts))
         trim()
         return Change.ADDED
     }

@@ -12,19 +12,26 @@ package ru.uvw.dshnc.logic
  * tested without a screen.
  */
 object VoiceMenu {
-    /** One row of the menu. */
+    /** One row of the menu; a separator is a row with no action. */
     data class Item (
         val id: String,
         val title: String,
         /** The small grey line under the title, for the two modes. */
         val subtitle: String?,
-        /** A checkmark next to the habit that is set right now. */
+        /** A checkmark next to the habit or the form that is set right now. */
         val checked: Boolean,
+        /** A divider between groups: nothing to tap, nothing to read. */
+        val separator: Boolean = false,
     )
 
     const val NEW_SESSION = "new-session"
     const val MODE_HOLD = "mode-hold"
     const val MODE_TAP = "mode-tap"
+    const val SEPARATOR = "separator"
+
+    const val ANSWER_SHORT = "answer-short"
+    const val ANSWER_LONG = "answer-long"
+    const val ANSWER_BOTH = "answer-both"
 
     /**
      * The rows, in the order they are shown.
@@ -32,7 +39,7 @@ object VoiceMenu {
      * @param mode the habit that is set right now.
      * @returns three rows: the new conversation, then the two habits with their explanations.
      */
-    fun items (mode: VoiceMode): List<Item> = listOf(
+    fun items (mode: VoiceMode, answerMode: AnswerMode = AnswerMode.LONG): List<Item> = listOf(
         Item(
             id = NEW_SESSION,
             title = "Новая сессия",
@@ -51,7 +58,19 @@ object VoiceMenu {
             subtitle = "Первый тап — включает запись, второй — завершает и отправляет голосовое сообщение.",
             checked = mode == VoiceMode.TOGGLE,
         ),
+        Item(id = SEPARATOR, title = "Показывать ответы", subtitle = null, checked = false, separator = true),
+        Item(ANSWER_SHORT, AnswerMode.SHORT.title, null, answerMode == AnswerMode.SHORT),
+        Item(ANSWER_LONG, AnswerMode.LONG.title, null, answerMode == AnswerMode.LONG),
+        Item(ANSWER_BOTH, AnswerMode.BOTH.title, null, answerMode == AnswerMode.BOTH),
     )
+
+    /** Which form an item selects, or null when the item is not about a form. */
+    fun answerModeOf (id: String): AnswerMode? = when (id) {
+        ANSWER_SHORT -> AnswerMode.SHORT
+        ANSWER_LONG -> AnswerMode.LONG
+        ANSWER_BOTH -> AnswerMode.BOTH
+        else -> null
+    }
 
     /** Which habit an item selects, or null when the item is not about a habit. */
     fun modeOf (id: String): VoiceMode? = when (id) {

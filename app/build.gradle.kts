@@ -11,8 +11,8 @@ android {
         applicationId = "ru.uvw.dshnc"
         minSdk = 33
         targetSdk = 34
-        versionCode = 129
-        versionName = "0.10.35"
+        versionCode = 130
+        versionName = "0.10.36"
     }
 
     signingConfigs {
@@ -67,6 +67,10 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // сканер QR: готовый экран камеры, без сервисов Google
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // markdown в ответах: модель пишет им почти всегда, и сырые ** в пузыре читать нельзя.
+    // ext-tables — плагин таблиц (артефакт io.noties.markwon:ext-tables, не tables)
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
     testImplementation("junit:junit:4.13.2")
     // Android on the JVM: the services, the notification and the connectivity manager are
     // only checkable with it, and the network to mavenCentral is there

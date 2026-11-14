@@ -101,6 +101,15 @@ class TokenStore(private val context: Context) {
         get() = read("voiceSynth") ?: "device"
         set(value) = write("voiceSynth", value)
 
+    /**
+     * Which form of an answer the voice screen shows: `short`, `long` or `both`.
+     *
+     * The long form is the default: it is what the screen showed before the choice existed.
+     */
+    var answerMode: String
+        get() = read("answerMode") ?: "long"
+        set(value) = write("answerMode", value)
+
     /** The voice screen's button habit: `ptt` (hold) or `toggle` (press twice). */
     var voiceMode: String
         get() = read("voiceMode") ?: "ptt"
