@@ -100,6 +100,10 @@ class VoiceChatActivity : AppCompatActivity() {
     private var recording = false
     /** The last outcome, shown in the fixed status line until the person does something new. */
     private var status: String? = null
+    /** The «down» button, shown only when the person has scrolled away from the newest line. */
+    private lateinit var downButton: TextView
+    /** True while the person is reading history: new lines must not yank the view away. */
+    private var scrolledAway = false
 
     private val permissionRequest = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
@@ -163,8 +167,38 @@ class VoiceChatActivity : AppCompatActivity() {
         scroller = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             addView(chat)
+            setOnScrollChangeListener { _, _, _, _, _ -> onConversationScrolled() }
         }
         root.addView(scroller)
+
+        // the «down» button: a small tab that appears only when the person has scrolled away, so a
+        // new answer never moves the text they are reading
+        downButton = TextView(this).apply {
+            text = "▼ вниз"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding((12 * density).toInt(), (4 * density).toInt(), (12 * density).toInt(), (4 * density).toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 12 * density
+                setColor(Color.parseColor("#374151"))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.END
+                setMargins(0, (4 * density).toInt(), pad, (4 * density).toInt())
+            }
+            visibility = View.GONE
+            setOnClickListener {
+                scrolledAway = false
+                downButton.visibility = View.GONE
+                autoScroll()
+            }
+        }
+        root.addView(downButton)
 
         // the hint stands above the big button and is always there: a person should not have to
         // remember which habit the button has. Small on purpose: it is a hint, not a title.
@@ -608,6 +642,39 @@ class VoiceChatActivity : AppCompatActivity() {
         renderChat()
     }
 
+    /**
+     * Follow the conversation, unless the person is reading history.
+     *
+     * A new line has to be visible to the last pixel — «добавилось, но не видно» is the same as
+     * "nothing happened" — but yanking the view while somebody scrolls back is worse than a missed
+     * message, so the position is kept and a small «down» tab appears instead.
+     */
+    private fun autoScroll () {
+        if (scrolledAway) {
+            downButton.visibility = View.VISIBLE
+            return
+        }
+        downButton.visibility = View.GONE
+        scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** Where is the reader: at the newest line, or a screen or more above it? */
+    private fun onConversationScrolled () {
+        val content = chat.height
+        val window = scroller.height
+        if (content <= window) {
+            scrolledAway = false
+            downButton.visibility = View.GONE
+            return
+        }
+        val fromBottom = content - window - scroller.scrollY
+        val away = fromBottom > window
+        if (away != scrolledAway) {
+            scrolledAway = away
+            downButton.visibility = if (away) View.VISIBLE else View.GONE
+        }
+    }
+
     /** The step is over: the line goes away rather than turning into history. */
     private fun hideProgress () {
         progressLine.visibility = View.GONE
@@ -624,8 +691,10 @@ class VoiceChatActivity : AppCompatActivity() {
     private fun renderChat () {
         chat.removeAllViews()
         var previousId: String? = null
-        for (entry in VoiceChatBus.snapshot()) {
-            chat.addView(view(entry, previousId))
+        val entries = VoiceChatBus.snapshot()
+        val tails = VoiceBubble.tails(entries)
+        entries.forEachIndexed { index, entry ->
+            chat.addView(view(entry, previousId, tails[index]))
             previousId = entry.id
         }
         if (progressLine.visibility == View.VISIBLE) {
@@ -633,14 +702,14 @@ class VoiceChatActivity : AppCompatActivity() {
             chat.addView(progressLine)
         }
         refreshTitle()
-        scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
+        autoScroll()
     }
 
     /**
      * One line of the conversation: a blue bubble on the right for the person, a dark one on the
      * left for the answer, and nothing but small grey text for the screen's own notes.
      */
-    private fun view (entry: VoiceChatLog.Entry, previousId: String?): View {
+    private fun view (entry: VoiceChatLog.Entry, previousId: String?, tail: Boolean): View {
         val density = resources.displayMetrics.density
         val bubbleMaxWidth = VoiceBubble.maxWidthPx(resources.displayMetrics.widthPixels)
         val row = LinearLayout(this).apply {
@@ -649,6 +718,8 @@ class VoiceChatActivity : AppCompatActivity() {
                 "end" -> Gravity.END
                 else -> Gravity.START
             }
+            // the avatar stands at the bottom of an incoming bubble, and only there
+            setPadding(0, 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -658,18 +729,21 @@ class VoiceChatActivity : AppCompatActivity() {
         val bubble = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             if (entry.role != VoiceChat.Role.SYSTEM) {
+                // the tail lives in the padding of the bubble itself: 8 dp of it on the tail side
+                val tailSide = if (tail) (8 * density).toInt() else 0
                 setPadding(
                     (VoiceBubble.PADDING_H_DP * density).toInt(),
                     (VoiceBubble.PADDING_V_DP * density).toInt(),
-                    (VoiceBubble.PADDING_H_DP * density).toInt(),
+                    (VoiceBubble.PADDING_H_DP * density).toInt() + if (entry.role == VoiceChat.Role.USER) tailSide else 0,
                     (VoiceBubble.PADDING_V_DP * density).toInt(),
                 )
                 VoiceBubble.background(entry.role)?.let { color ->
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
-                        cornerRadius = VoiceBubble.RADIUS_DP * density
-                        setColor(Color.parseColor(color))
-                    }
+                    background = VoiceBubbleDrawable(
+                        color = Color.parseColor(color),
+                        radius = VoiceBubble.RADIUS_DP * density,
+                        tail = if (tail) 8 * density else 0f,
+                        outgoing = entry.role == VoiceChat.Role.USER,
+                    )
                 }
             } else {
                 setPadding(0, 0, 0, 0)
@@ -680,9 +754,10 @@ class VoiceChatActivity : AppCompatActivity() {
             )
         }
 
-        // who is speaking, in the corner of every answer: an emoji and a name, small and grey
+        // the name of the speaker inside the bubble, top-left, like a messenger's green name; the
+        // emoji is in the avatar, so repeating it here would be noise
         if (entry.role == VoiceChat.Role.ASSISTANT) {
-            entry.who?.let { who -> bubble.addView(nameTag(who)) }
+            entry.who?.takeIf { it.name.isNotBlank() }?.let { who -> bubble.addView(nameInside(who)) }
         }
         val size = if (entry.role == VoiceChat.Role.SYSTEM) 13f else 18f
         val color = Color.parseColor(VoiceBubble.textColor(entry.role))
@@ -737,6 +812,7 @@ class VoiceChatActivity : AppCompatActivity() {
         entry.note?.let { note -> bubble.addView(caption(note)) }
         entry.steps?.takeIf { it > 0 }?.let { count -> bubble.addView(caption("шагов: $count")) }
 
+        if (entry.role == VoiceChat.Role.ASSISTANT) row.addView(avatar(entry.who))
         row.addView(bubble)
         return row
     }
@@ -757,20 +833,38 @@ class VoiceChatActivity : AppCompatActivity() {
     private fun hasTable (text: String): Boolean =
         text.lineSequence().any { line -> line.trimStart().startsWith("|") }
 
-    /** The assistant's corner label: `🦜 Кеша`, or just the name when there is no emoji. */
-    private fun nameTag (who: VoiceChat.Whom): TextView {
+    /** The speaker's name inside the bubble: small, accent-coloured, top-left. */
+    private fun nameInside (who: VoiceChat.Whom): TextView = TextView(this).apply {
+        text = who.name
+        textSize = 12f
+        setTextColor(Color.parseColor(VoiceBubble.NAME_COLOR))
+        setPadding(0, 0, 0, (2 * resources.displayMetrics.density).toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        )
+    }
+
+    /**
+     * The assistant's avatar: a round dark field with its emoji, at the bottom of an incoming
+     * bubble. Without a name there is still a face — a robot, the shape of "someone answers".
+     */
+    private fun avatar (who: VoiceChat.Whom?): TextView {
         val density = resources.displayMetrics.density
-        val icon = who.icon?.trim().orEmpty()
+        val size = VoiceBubble.AVATAR_DP * density
         return TextView(this).apply {
-            text = if (icon.isEmpty()) who.name else "$icon ${who.name}"
-            textSize = 11f
-            gravity = Gravity.END
-            setTextColor(Color.parseColor("#9ca3af"))
-            setPadding(0, (2 * density).toInt(), 0, 0)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
+            text = who?.icon?.trim()?.takeIf { it.isNotEmpty() }
+                ?: VoiceBubble.AVATAR_FALLBACK
+            textSize = 15f
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(size.toInt(), size.toInt()).apply {
+                gravity = Gravity.BOTTOM
+                setMargins(0, 0, (VoiceBubble.AVATAR_GAP_DP * density).toInt(), 0)
+            }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#1f2937"))
+            }
         }
     }
 
@@ -846,7 +940,10 @@ class VoiceChatActivity : AppCompatActivity() {
         super.onResume()
         // coming back to a screen that was in the background: the queue kept the lines, drain them
         VoiceInbox.onPosted = { runOnUiThread { drainInbox() } }
+        scrolledAway = false
+        downButton.visibility = View.GONE
         drainInbox()
+        autoScroll()
     }
 
     override fun onDestroy () {

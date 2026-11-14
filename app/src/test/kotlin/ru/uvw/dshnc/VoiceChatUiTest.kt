@@ -814,7 +814,7 @@ class VoiceAnswerBubbleTest {
     }
 
     @Test
-    fun `the corner label names the assistant, and only when it is known`() {
+    fun `the speaker's name sits inside the bubble, without the emoji`() {
         val screen = screen()
         ru.uvw.dshnc.logic.VoiceChatBus.clear()
         try {
@@ -831,12 +831,244 @@ class VoiceAnswerBubbleTest {
             walk(screen.findViewById(android.R.id.content)) { view ->
                 if (view is android.widget.TextView) texts.add(view.text?.toString().orEmpty())
             }
-            assertTrue(texts.contains("🦜 Кеша"))
-            // a name without an emoji is just the name
-            val method = VoiceChatActivity::class.java.getDeclaredMethod("nameTag", ru.uvw.dshnc.logic.VoiceChat.Whom::class.java)
-                .apply { isAccessible = true }
-            val plain = method.invoke(screen, ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша")) as android.widget.TextView
-            assertEquals("Кеша", plain.text.toString())
+            // the name is its own label; the emoji lives on the avatar and is not glued to it
+            assertTrue(texts.contains("Кеша"))
+            assertTrue(texts.contains("🦜"))
+            assertTrue(texts.none { it.contains("🦜 Кеша") })
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+}
+
+/**
+ * A series of remarks reads as one speech: only its last bubble carries the tail.
+ */
+class VoiceBubbleTailsTest {
+    private fun entry (id: String, role: ru.uvw.dshnc.logic.VoiceChat.Role, text: String) =
+        ru.uvw.dshnc.logic.VoiceChatLog.Entry(id, role, text)
+
+    @Test
+    fun `only the last of a run has a tail`() {
+        val entries = listOf(
+            entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "первый"),
+            entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "второй"),
+            entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "третий"),
+            entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "мой"),
+        )
+        assertEquals(
+            listOf(false, false, true, true),
+            ru.uvw.dshnc.logic.VoiceBubble.tails(entries),
+        )
+    }
+
+    @Test
+    fun `a single message has a tail, two speakers alternate tails`() {
+        assertEquals(
+            listOf(true),
+            ru.uvw.dshnc.logic.VoiceBubble.tails(listOf(entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "один"))),
+        )
+        assertEquals(
+            listOf(true, true, true),
+            ru.uvw.dshnc.logic.VoiceBubble.tails(
+                listOf(
+                    entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "вопрос"),
+                    entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ"),
+                    entry("b", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "ещё"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a service note never carries a tail and breaks nothing`() {
+        val entries = listOf(
+            entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "вопрос"),
+            entry("", ru.uvw.dshnc.logic.VoiceChat.Role.SYSTEM, "слушаю"),
+            entry("a", ru.uvw.dshnc.logic.VoiceChat.Role.USER, "ещё"),
+        )
+        val tails = ru.uvw.dshnc.logic.VoiceBubble.tails(entries)
+        // the note ends the run, so the remark before it is the last one and carries the tail
+        assertEquals(listOf(true, false, true), tails)
+    }
+}
+
+/**
+ * The messenger look: an avatar beside incoming bubbles, the name inside them.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceMessengerLookTest {
+    private fun screen(): VoiceChatActivity =
+        org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+
+    private fun collect (view: android.view.View): List<android.view.View> {
+        val all = mutableListOf<android.view.View>()
+        fun walk (v: android.view.View) {
+            all.add(v)
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        walk(view)
+        return all
+    }
+
+    @Test
+    fun `an incoming bubble has a 28 dp avatar with the emoji from who`() {
+        val screen = screen()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "av-1", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ",
+                ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦜"),
+            )
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val views = collect(screen.findViewById(android.R.id.content))
+            val avatar = views.filterIsInstance<android.widget.TextView>().firstOrNull { it.text == "🦜" }
+            assertNotNull("аватарка с иконкой не найдена", avatar)
+            val density = screen.resources.displayMetrics.density
+            val lp = avatar!!.layoutParams as android.widget.LinearLayout.LayoutParams
+            assertEquals((ru.uvw.dshnc.logic.VoiceBubble.AVATAR_DP * density).toInt(), lp.width)
+            assertEquals(lp.width, lp.height)
+            // the name is inside the bubble, in the accent colour, without the emoji
+            val name = views.filterIsInstance<android.widget.TextView>().firstOrNull { it.text == "Кеша" }
+            assertNotNull("имени внутри пузыря нет", name)
+            assertEquals(
+                android.graphics.Color.parseColor(ru.uvw.dshnc.logic.VoiceBubble.NAME_COLOR),
+                name!!.currentTextColor,
+            )
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `without who the avatar is a robot and there is no name`() {
+        val screen = screen()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet("av-2", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ")
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val texts = collect(screen.findViewById(android.R.id.content))
+                .filterIsInstance<android.widget.TextView>()
+                .map { it.text?.toString().orEmpty() }
+            assertTrue(texts.contains(ru.uvw.dshnc.logic.VoiceBubble.AVATAR_FALLBACK))
+            // no name label anywhere, and the old corner caption is gone
+            assertTrue(texts.none { it.endsWith("Кеша") })
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `the old top-right caption is gone`() {
+        val screen = screen()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "av-3", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ",
+                ru.uvw.dshnc.logic.VoiceChat.Whom("Кеша", "🦜"),
+            )
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val texts = collect(screen.findViewById(android.R.id.content))
+                .filterIsInstance<android.widget.TextView>()
+                .map { it.text?.toString().orEmpty() }
+            // the emoji lives in the avatar only; no «🦜 Кеша» label remains
+            assertTrue(texts.none { it.contains("🦜 Кеша") })
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+}
+
+/**
+ * The newest line is visible; the reader is not dragged away from history.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceScrollTest {
+    private fun screen(): VoiceChatActivity =
+        org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+
+    private fun field (screen: VoiceChatActivity, name: String): Any? =
+        VoiceChatActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.get(screen)
+
+    private fun layout (screen: VoiceChatActivity) {
+        val root = screen.findViewById<android.view.View>(android.R.id.content)
+        val metrics = screen.resources.displayMetrics
+        root.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(metrics.widthPixels, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(metrics.heightPixels, android.view.View.MeasureSpec.EXACTLY),
+        )
+        root.layout(0, 0, metrics.widthPixels, metrics.heightPixels)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+    }
+
+    private fun fill (screen: VoiceChatActivity, count: Int) {
+        repeat(count) { index ->
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "s-$index",
+                if (index % 2 == 0) ru.uvw.dshnc.logic.VoiceChat.Role.USER else ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT,
+                "строка $index — довольно длинный текст, чтобы лента стала высокой и прокручиваемой",
+            )
+        }
+        val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+        render.invoke(screen)
+        layout(screen)
+    }
+
+    @Test
+    fun `a new line is scrolled into view to its very bottom`() {
+        val screen = screen()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            fill(screen, 30)
+            val scroller = field(screen, "scroller") as android.widget.ScrollView
+            val chat = field(screen, "chat") as android.widget.LinearLayout
+            val max = (chat.height - scroller.height).coerceAtLeast(0)
+            assertTrue("лента должна быть прокручиваемой", max > 0)
+            assertEquals("должен быть виден самый низ ленты", max, scroller.scrollY)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `a reader far up is not dragged away, and gets the down tab`() {
+        val screen = screen()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            fill(screen, 40)
+            val scroller = field(screen, "scroller") as android.widget.ScrollView
+            val down = field(screen, "downButton") as android.widget.TextView
+            // the person scrolls back to the very top: a screen and more from the end
+            scroller.scrollTo(0, 0)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertEquals("кнопка «вниз» должна быть видна", android.view.View.VISIBLE, down.visibility)
+
+            // a new line arrives: no autoscroll, the position is kept
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
+                "s-new",
+                ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT,
+                "новый ответ, который не должен дёргать читателя",
+            )
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            layout(screen)
+            assertEquals(0, scroller.scrollY)
+            assertEquals(android.view.View.VISIBLE, down.visibility)
+
+            // the tab brings the reader to the end and disappears
+            down.performClick()
+            layout(screen)
+            val chat = field(screen, "chat") as android.widget.LinearLayout
+            assertEquals((chat.height - scroller.height).coerceAtLeast(0), scroller.scrollY)
+            assertEquals(android.view.View.GONE, down.visibility)
         } finally {
             ru.uvw.dshnc.logic.VoiceChatBus.clear()
             screen.finish()

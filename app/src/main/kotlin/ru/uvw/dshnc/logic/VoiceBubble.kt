@@ -23,6 +23,16 @@ object VoiceBubble {
     const val SYSTEM_TEXT = "#6b7280"
 
     const val RADIUS_DP = 16
+
+    /** The accent colour of a speaker's name inside a bubble, like a messenger's green. */
+    const val NAME_COLOR = "#7dd3a0"
+
+    /** The avatar beside an incoming bubble: a round emoji field. */
+    const val AVATAR_DP = 28
+    const val AVATAR_GAP_DP = 6
+
+    /** Who answers when the host did not say: a robot is honest about it. */
+    const val AVATAR_FALLBACK = "🤖"
     const val PADDING_H_DP = 12
     const val PADDING_V_DP = 8
 
@@ -58,6 +68,25 @@ object VoiceBubble {
 
     /** The widest a bubble may be, in pixels, for a screen of this width. */
     fun maxWidthPx (screenWidthPx: Int): Int = (screenWidthPx * MAX_WIDTH_FRACTION).toInt()
+
+    /**
+     * Which lines carry a tail.
+     *
+     * The tail marks the end of a run: the last remark of one speaker before the other answers, or
+     * before the conversation ends. A series of messages from the same person reads as one speech
+     * that way, exactly like a messenger does it.
+     *
+     * @param entries the conversation in order.
+     * @returns one flag per entry; service notes never carry a tail.
+     */
+    fun tails (entries: List<VoiceChatLog.Entry>): List<Boolean> = entries.mapIndexed { index, entry ->
+        if (entry.role == VoiceChat.Role.SYSTEM) {
+            false
+        } else {
+            val next = entries.getOrNull(index + 1)
+            next == null || next.role != entry.role
+        }
+    }
 
     /**
      * The space above a line.
