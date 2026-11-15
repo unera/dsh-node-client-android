@@ -1,6 +1,7 @@
 package ru.uvw.dshnc
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -90,8 +91,6 @@ class VoiceChatActivity : AppCompatActivity() {
     private var assistantWho: VoiceChat.Whom? = null
     /** The node's voice API, when the screen runs inside a host that has one. */
     private var voice: ru.uvw.dshnc.api.VoiceApi? = null
-    /** The menu, while it is open: dismissed from the rows themselves. */
-    private var popup: android.widget.PopupWindow? = null
     /** The screen's own small decisions: the hint and the mode, testable without a device. */
     private lateinit var ui: VoiceChatUi
 
@@ -150,16 +149,16 @@ class VoiceChatActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
         })
         header.addView(TextView(this).apply {
-            text = "⋮"
+            text = "⚙"
             textSize = 24f
             gravity = Gravity.CENTER
-            contentDescription = "меню голосового чата"
+            contentDescription = "настройки голосового чата"
             val size = (24 * density).toInt()
             val margin = (16 * density).toInt()
             layoutParams = LinearLayout.LayoutParams(size, size).apply { setMargins(margin, 0, margin, 0) }
             isClickable = true
             isFocusable = true
-            setOnClickListener { openMenu(it) }
+            setOnClickListener { startActivity(Intent(this@VoiceChatActivity, VoiceSettingsActivity::class.java)) }
         })
 
         // the conversation: everything spoken so far, newest at the bottom
@@ -315,146 +314,6 @@ class VoiceChatActivity : AppCompatActivity() {
         refreshHint(0.0)
     }
 
-    /**
-     * The overflow menu: the two habits, and starting a new conversation.
-     *
-     * A plain `PopupMenu` cannot carry the small grey captions the modes need, so the rows are
-     * built here; the list itself comes from [VoiceMenu], which is where its order and marks are
-     * tested.
-     */
-    private fun openMenu (anchor: View) {
-        val density = resources.displayMetrics.density
-        val rows = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#1f2937"))
-            setPadding(0, (8 * density).toInt(), 0, (8 * density).toInt())
-        }
-        for (item in VoiceMenu.items(mode, AnswerMode.of(store.answerMode), store.voiceSynth)) {
-            if (item.separator) {
-                rows.addView(TextView(this).apply {
-                    text = item.title
-                    textSize = 12f
-                    setTextColor(Color.parseColor("#6b7280"))
-                    setPadding((16 * density).toInt(), (12 * density).toInt(), (16 * density).toInt(), (4 * density).toInt())
-                })
-                rows.addView(android.view.View(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        (1 * density).toInt(),
-                    ).apply { setMargins((16 * density).toInt(), (6 * density).toInt(), (16 * density).toInt(), (6 * density).toInt()) }
-                    setBackgroundColor(Color.parseColor("#4b5563"))
-                })
-                continue
-            }
-            rows.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding((16 * density).toInt(), (10 * density).toInt(), (16 * density).toInt(), (10 * density).toInt())
-                isClickable = true
-                setOnClickListener {
-                    popup?.dismiss()
-                    onMenuItem(item.id)
-                }
-                addView(LinearLayout(this@VoiceChatActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    addView(TextView(this@VoiceChatActivity).apply {
-                        text = item.title
-                        textSize = 16f
-                        setTextColor(Color.WHITE)
-                    })
-                    item.subtitle?.let { subtitle ->
-                        addView(TextView(this@VoiceChatActivity).apply {
-                            text = subtitle
-                            textSize = 12f
-                            setTextColor(Color.parseColor("#9ca3af"))
-                            setPadding(0, (2 * density).toInt(), 0, 0)
-                        })
-                    }
-                })
-                // the habit that is set right now is marked, the action is not
-                if (item.checked) {
-                    addView(TextView(this@VoiceChatActivity).apply {
-                        text = "✓"
-                        textSize = 18f
-                        setTextColor(Color.parseColor("#2563eb"))
-                        setPadding((12 * density).toInt(), 0, 0, 0)
-                    })
-                }
-            })
-        }
-        val popup = android.widget.PopupWindow(
-            rows,
-            (280 * density).toInt(),
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            true,
-        ).apply {
-            isOutsideTouchable = true
-            elevation = 8 * density
-        }
-        this.popup = popup
-        popup.showAsDropDown(anchor, 0, (4 * density).toInt())
-    }
-
-    /** Act on a menu row: switch the habit, or start a new conversation on the host. */
-    private fun onMenuItem (id: String) {
-        VoiceMenu.modeOf(id)?.let { next ->
-            selectMode(next)
-            return
-        }
-        VoiceMenu.synthOf(id)?.let { value ->
-            // it goes on the wire with every take, so no restart is needed
-            store.voiceSynth = value
-            store.addEvent("synth", value)
-            return
-        }
-        VoiceMenu.answerModeOf(id)?.let { next ->
-            store.answerMode = next.wire
-            // redraw the conversation: the forms of every answer change with the setting
-            renderChat()
-            return
-        }
-        if (id == VoiceMenu.NEW_SESSION) newSession()
-    }
-
-    /**
-     * Start a new conversation on the host.
-     *
-     * The history is cleared only when the host accepted: a cleared screen with the old session
-     * still on the other side would be a lie about what the next remark does.
-     */
-    private fun newSession () {
-        val base = store.base
-        val token = store.token
-        if (base == null || token == null) {
-            addLine(VoiceSession.NO_ANSWER)
-            return
-        }
-        Thread({
-            val outcome = VoiceEvents(base, token).newSession()
-            runOnUiThread {
-                when (outcome) {
-                    is VoiceSession.Result.Accepted -> {
-                        VoiceInbox.clear()
-                        VoiceChatBus.clear()
-                        // the phrase belonged to the old conversation: drop it with the history
-                        ru.uvw.dshnc.logic.VoiceReplay.clear()
-                        hideProgress()
-                        addLine("новая сессия")
-                    }
-                    // the server's own words, not a shrug: the reason has to be readable on screen
-                    is VoiceSession.Result.Failed -> addLine(outcome.reason)
-                }
-            }
-        }, "dshnc-voice-session").start()
-    }
-
-    /**
-     * The line above the button: the habit, the clock, or the last outcome.
-     *
-     * A status («принято хостом», «слишком коротко») stays until the person starts a new take or
-     * picks another habit: replacing it at once with the habit hint made it flash and vanish.
-     */
     /**
      * Redraw the header.
      *

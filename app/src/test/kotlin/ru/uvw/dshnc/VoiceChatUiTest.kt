@@ -1238,7 +1238,9 @@ class SettingsReachabilityTest {
         val manifest = java.io.File("src/main/AndroidManifest.xml")
         val file = if (manifest.exists()) manifest else java.io.File("app/src/main/AndroidManifest.xml")
         val text = file.readText()
-        assertTrue("SettingsActivity не должна упоминаться в манифесте", !text.contains("SettingsActivity"))
+        // the dead screen is gone; the new voice settings are a different activity and must stay
+        assertTrue("мёртвый экран вернулся в манифест", !text.contains(".SettingsActivity"))
+        assertTrue("экран настроек голоса должен быть объявлен", text.contains("VoiceSettingsActivity"))
     }
 }
 
@@ -1727,6 +1729,124 @@ class MainScreenOrderTest {
             assertEquals((80 * density).toInt(), lp.width)
             assertEquals(lp.width, lp.height)
         } finally {
+            screen.finish()
+        }
+    }
+}
+
+/**
+ * The voice settings have their own screen, and every choice is written the moment it is tapped.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceSettingsScreenTest {
+    private fun app(): android.content.Context = org.robolectric.RuntimeEnvironment.getApplication()
+
+    private fun screen(): VoiceSettingsActivity =
+        org.robolectric.Robolectric.buildActivity(VoiceSettingsActivity::class.java).setup().get()
+
+    private fun items (screen: android.app.Activity): List<android.view.View> {
+        val found = mutableListOf<android.view.View>()
+        fun walk (view: android.view.View) {
+            found.add(view)
+            if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+        }
+        walk(screen.findViewById(android.R.id.content))
+        return found
+    }
+
+    private fun texts (screen: android.app.Activity): List<String> =
+        items(screen).filterIsInstance<android.widget.TextView>().map { it.text?.toString().orEmpty() }
+
+    @Test
+    fun `the screen carries the three groups and a back that just closes it`() {
+        val screen = screen()
+        try {
+            val all = texts(screen)
+            assertTrue(all.contains("Режим записи"))
+            assertTrue(all.contains("Показывать ответы"))
+            assertTrue(all.contains("Способ синтеза звука"))
+            assertTrue(all.any { it.contains("Держите и говорите") })
+            assertTrue(all.any { it.contains("Только короткую форму") })
+            assertTrue(all.any { it.contains("Синтез на DSH") })
+            // the back arrow closes this screen, it does not go anywhere else
+            val back = items(screen).filterIsInstance<android.widget.TextView>().first { it.text == "←" }
+            back.performClick()
+            assertTrue("назад должен завершать экран", screen.isFinishing)
+        } finally {
+            if (!screen.isFinishing) screen.finish()
+        }
+    }
+
+    @Test
+    fun `a choice is stored at once, without a save button`() {
+        val store = ru.uvw.dshnc.store.TokenStore(app())
+        store.voiceMode = "ptt"
+        store.answerMode = "long"
+        store.voiceSynth = "device"
+        val screen = screen()
+        try {
+            val label = items(screen).filterIsInstance<android.widget.TextView>()
+                .first { it.text?.toString()?.contains("Тапните для записи") == true }
+            // the row is what reacts to a finger: the label sits inside a clickable container
+            var row: android.view.View? = label
+            while (row != null && !row.isClickable) row = row.parent as? android.view.View
+            assertNotNull("строка должна быть нажимаемой", row)
+            row!!.performClick()
+            assertEquals("toggle", ru.uvw.dshnc.store.TokenStore(app()).voiceMode)
+        } finally {
+            if (!screen.isFinishing) screen.finish()
+        }
+    }
+}
+
+/**
+ * The chat header opens the settings; the menu that used to hold them is gone.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceChatHeaderTest {
+    @Test
+    fun `the gear is there and no popup survives in the chat`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        try {
+            val texts = mutableListOf<String>()
+            fun walk (view: android.view.View) {
+                if (view is android.widget.TextView) texts.add(view.text?.toString().orEmpty())
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            assertTrue("шестерёнка должна быть в шапке", texts.contains("⚙"))
+            assertTrue("меню ⋮ больше нет", texts.none { it == "⋮" })
+
+            // the chat screen itself must not hold a popup any more
+            val fields = VoiceChatActivity::class.java.declaredFields.map { it.type.name }
+            assertTrue(
+                "в активности не должно остаться PopupWindow: $fields",
+                fields.none { it.contains("PopupWindow") || it.contains("PopupMenu") },
+            )
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
+    fun `the conversation survives a trip to the settings`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet("t-1", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "ответ до ухода")
+            // leaving to the settings and coming back: the log lives in the process, not the view
+            org.robolectric.Robolectric.buildActivity(VoiceSettingsActivity::class.java).setup().get().finish()
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            val texts = mutableListOf<String>()
+            fun walk (view: android.view.View) {
+                if (view is android.widget.TextView) texts.add(view.text?.toString().orEmpty())
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            assertTrue("лента должна сохраниться: $texts", texts.any { it.contains("ответ до ухода") })
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
             screen.finish()
         }
     }

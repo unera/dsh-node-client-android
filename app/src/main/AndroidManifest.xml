@@ -55,6 +55,7 @@
         <activity android:name=".MenuActivity" android:exported="false" />
         <activity android:name=".SectionActivity" android:exported="false" />
         <activity android:name=".VoiceChatActivity" android:exported="false" />
+        <activity android:name=".VoiceSettingsActivity" android:exported="false" />
 
         <!-- the dialog.ask question: a window of its own, transparent, no history,
              out of the recent list — it is a question, not a screen of the app -->

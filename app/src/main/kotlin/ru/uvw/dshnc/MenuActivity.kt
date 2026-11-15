@@ -22,6 +22,11 @@ class MenuActivity : AppCompatActivity() {
 
         root.addView(Ui.group(this, getString(R.string.menu_group_phone)))
         root.addView(Ui.item(this, getString(R.string.menu_android), getString(R.string.menu_android_sub)) { open("android") })
+        root.addView(Ui.divider(this))
+        // the voice chat has enough choices of its own to deserve a screen
+        root.addView(Ui.item(this, "Голосовой чат", "Режим записи, показ ответов, синтез") {
+            startActivity(android.content.Intent(this, VoiceSettingsActivity::class.java))
+        })
 
         setContentView(root)
     }
