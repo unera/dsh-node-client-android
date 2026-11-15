@@ -1851,3 +1851,74 @@ class VoiceChatHeaderTest {
         }
     }
 }
+
+/**
+ * One failure is one sentence, and a table keeps its numbers on one line.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceOutcomeLineTest {
+    @Test
+    fun `a transport failure followed by a 405 leaves one line, about the 405`() {
+        val log = ru.uvw.dshnc.logic.VoiceChatLog()
+        // the first fact: no answer at all
+        log.outcome(ru.uvw.dshnc.logic.VoiceFailure.line(null, "SocketTimeoutException"), resend = true)
+        // the second fact about the same attempt: the server spoke
+        val second = ru.uvw.dshnc.logic.VoiceFailure.line(405, "method not allowed")
+        log.outcome(second, resend = true)
+        val outcomes = log.snapshot().filter { it.outcome }
+        assertEquals("на одну попытку — одна строка", 1, outcomes.size)
+        // the last fact wins: the server's own words, not «плохая связь»
+        assertTrue(outcomes.single().text.contains("method not allowed"))
+        assertTrue(!outcomes.single().text.contains("плохая связь"))
+        assertTrue(outcomes.single().resend)
+    }
+
+    @Test
+    fun `the note about the saved take rides in the same line`() {
+        val log = ru.uvw.dshnc.logic.VoiceChatLog()
+        val note = ru.uvw.dshnc.logic.VoiceFailure.note(null, "SocketTimeoutException")
+        val text = ru.uvw.dshnc.logic.VoiceFailure.line(null, "SocketTimeoutException") + "\n" + note
+        log.outcome(text, resend = true)
+        val line = log.snapshot().single()
+        assertTrue(line.text.startsWith("плохая связь"))
+        assertTrue(line.text.contains("запись сохранена на телефоне"))
+        // and a success drops the offer while keeping the line
+        log.resendText("принято хостом · 1.5 с")
+        log.dropResend()
+        val after = log.snapshot().single()
+        assertEquals("принято хостом · 1.5 с", after.text)
+        assertEquals(false, after.resend)
+    }
+}
+
+/**
+ * A table with long numbers: no compression, horizontal scrolling instead.
+ */
+@RunWith(RobolectricTestRunner::class)
+class VoiceTableWidthTest {
+    @Test
+    fun `a table is not capped by the bubble width and scrolls`() {
+        val screen = org.robolectric.Robolectric.buildActivity(VoiceChatActivity::class.java).setup().get()
+        ru.uvw.dshnc.logic.VoiceChatBus.clear()
+        try {
+            val table = "| валюта | курс |\n| --- | --- |\n| USD | 91,0322 ₽ |\n| EUR | 99,1234 ₽ |"
+            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet("tab-1", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, table)
+            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
+            render.invoke(screen)
+            var scroller: android.widget.HorizontalScrollView? = null
+            fun walk (view: android.view.View) {
+                if (view is android.widget.HorizontalScrollView) scroller = view
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+            }
+            walk(screen.findViewById(android.R.id.content))
+            assertNotNull("таблица должна ехать в горизонтальном скролле: $scroller", scroller)
+            val cell = scroller!!.getChildAt(0) as android.widget.TextView
+            // the width cap is what squeezed the columns before
+            assertEquals(Int.MAX_VALUE, cell.maxWidth)
+            assertEquals("скролл не должен растягивать ребёнка до своей ширины", false, scroller!!.isFillViewport)
+        } finally {
+            ru.uvw.dshnc.logic.VoiceChatBus.clear()
+            screen.finish()
+        }
+    }
+}

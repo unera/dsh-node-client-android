@@ -467,10 +467,11 @@ class VoiceChatActivity : AppCompatActivity() {
         lastTakeId = takeId
         // the path stays in the log: on screen it read like a fault
         store.addEvent("voice не принято", VoiceStatus.logDetails("$status $reason", parked.absolutePath))
-        addLine(VoiceFailure.line(status, reason))
-        // the second line offers to send the very same take again: the file is here, and the id
-        // makes a second attempt harmless if the first one actually arrived
-        VoiceFailure.note(status, reason)?.let { note -> VoiceChatBus.system(note, takeId, resend = true) }
+        // one attempt, one line: the transport may fail first and the server answer after, and
+        // both are the same attempt — the last fact replaces the previous sentence
+        val note = VoiceFailure.note(status, reason)
+        val text = VoiceFailure.line(status, reason) + (note?.let { "\n$it" } ?: "")
+        VoiceChatBus.outcome(text, resend = note != null)
         renderChat()
         show(VoiceFailure.line(status, reason))
     }
@@ -664,10 +665,13 @@ class VoiceChatActivity : AppCompatActivity() {
                 })
                 continue
             }
+            val table = hasTable(part.text)
             val view = TextView(this).apply {
                 textSize = size
                 setTextColor(color)
-                maxWidth = bubbleMaxWidth
+                // a capped width made the table compress its columns and break numbers in half;
+                // a table is allowed to be wider than the bubble and scrolls inside it
+                maxWidth = if (table) Int.MAX_VALUE else bubbleMaxWidth
                 // the bubble must be as wide as the text needs, and never squeezed by a scroller
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -681,13 +685,15 @@ class VoiceChatActivity : AppCompatActivity() {
                 // the person's own words and the screen's notes stay exactly as typed
                 view.text = part.text
             }
-            if (hasTable(part.text)) {
+            if (table) {
                 // Only a table may be wider than the bubble, and only it scrolls: giving the whole
                 // answer to a HorizontalScrollView made it measure the text unconstrained, and the
                 // bubble collapsed to half the screen with words breaking three at a time.
                 bubble.addView(android.widget.HorizontalScrollView(this).apply {
                     isHorizontalScrollBarEnabled = true
-                    isFillViewport = true
+                    // the child keeps its natural width and scrolls: fillViewport would stretch it
+                    // to the viewport and squeezing again is exactly what must not happen
+                    isFillViewport = false
                     layoutParams = LinearLayout.LayoutParams(
                         bubbleMaxWidth,
                         LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -920,7 +926,7 @@ class VoiceChatActivity : AppCompatActivity() {
 
     /** The same line tells the outcome: accepted, or a new reason with the offer kept. */
     private fun showResendResult (text: String, accepted: Boolean) {
-        VoiceChatBus.resendText(text)
+        if (accepted) VoiceChatBus.resendText(text) else VoiceChatBus.outcome(text, resend = true)
         store.addEvent(if (accepted) "voice повтор принят" else "voice повтор не принят", text)
         renderChat()
     }

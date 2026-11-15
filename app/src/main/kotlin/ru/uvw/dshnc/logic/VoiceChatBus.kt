@@ -57,6 +57,12 @@ object VoiceChatBus {
         onChanged?.invoke()
     }
 
+    /** The one line about a failed attempt: replaced, never appended. */
+    fun outcome (text: String, resend: Boolean) {
+        synchronized(lock) { log.outcome(text, resend) }
+        onChanged?.invoke()
+    }
+
     /** The outcome of a repeat, in the same line that offered it. */
     fun resendText (text: String): Boolean = synchronized(lock) { log.resendText(text) }
 

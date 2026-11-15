@@ -138,6 +138,8 @@ class VoiceChatLog (private val limit: Int = 200) {
         val report: String? = null,
         /** A note that offers to send the parked take again. */
         val resend: Boolean = false,
+        /** The outcome of a take: one per attempt, replaced rather than repeated. */
+        val outcome: Boolean = false,
     )
 
     /** What a write did, so the screen knows how much to redraw. */
@@ -233,6 +235,26 @@ class VoiceChatLog (private val limit: Int = 200) {
         trim()
     }
 
+    /**
+     * The single line about one failed attempt.
+     *
+     * A take can fail twice on its way — the transport first, then the server — and both are the
+     * same attempt. Only the last fact is worth a line, so the previous one is replaced: two
+     * sentences about one failure read as two failures.
+     *
+     * @param text what to show: the server's words, or «плохая связь».
+     * @param resend whether the line offers to send the take again.
+     */
+    fun outcome (text: String, resend: Boolean) {
+        val index = items.indexOfLast { it.outcome }
+        if (index >= 0) {
+            items[index] = items[index].copy(text = text, resend = resend)
+        } else {
+            items.add(Entry("", VoiceChat.Role.SYSTEM, text, resend = resend, outcome = true))
+            trim()
+        }
+    }
+
     /** Replace the text of the last resend note: its outcome, in the same line. */
     fun resendText (text: String): Boolean {
         // the note keeps its place after the offer is dropped, so the last system line is the one
@@ -244,7 +266,7 @@ class VoiceChatLog (private val limit: Int = 200) {
 
     /** The take was accepted: the offer to resend has nothing left to offer. */
     fun dropResend (): Boolean {
-        val index = items.indexOfLast { it.resend }
+        val index = items.indexOfLast { it.resend || it.outcome }
         if (index < 0) return false
         items[index] = items[index].copy(resend = false)
         return true
