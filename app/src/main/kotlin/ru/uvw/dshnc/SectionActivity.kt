@@ -447,6 +447,16 @@ class SectionActivity : AppCompatActivity() {
 
         push(Ui.itemEx(
             this,
+            "Кому можно открываться",
+            if (store.apps.isEmpty()) "любое приложение" else "${store.apps.size} шт.",
+            Ui.stateColor(true),
+            "Список приложений, которым разрешено открывать ссылки по запросу извне; пусто — любое",
+            { open("intents") },
+        ))
+        push(Ui.divider(this))
+
+        push(Ui.itemEx(
+            this,
             "Доступ к каталогам",
             dirsPhrase(store.roots.size),
             Ui.stateColor(store.roots.isNotEmpty()),
@@ -651,10 +661,12 @@ class SectionActivity : AppCompatActivity() {
         frame.addView(remove, android.widget.FrameLayout.LayoutParams(buttonWidth, android.widget.FrameLayout.LayoutParams.MATCH_PARENT)
             .apply { gravity = android.view.Gravity.END })
         val content = Ui.item(this, title, subtitle, null)
+        // No side margins: the row has to cover the button completely, or the button shows
+        // itself without a swipe. `Ui.item` brings its own padding, so the text keeps its place.
         frame.addView(content, android.widget.FrameLayout.LayoutParams(
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
             android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { setMargins((16 * density).toInt(), 0, (16 * density).toInt(), 0) })
+        ))
 
         var downX = 0f
         var startX = 0f
