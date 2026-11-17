@@ -323,6 +323,14 @@ class DeviceApi (private val context: Context) {
                 runCatching { manager.getPackageInfo(packageName, 0) }.isSuccess
             if (!installed) error("некому открыть: подходящего приложения нет")
         }
+        // The whitelist from the "Разрешения" screen: empty means any app, filled means only
+        // those. Checked after the system has named who would answer, because a package the
+        // caller pinned is not necessarily the one that opens.
+        val target = chosen?.activityInfo?.packageName ?: intent.`package`
+        val allowed = ru.uvw.dshnc.store.TokenStore(context).apps
+        if (allowed.isNotEmpty() && target != null && !allowed.contains(target)) {
+            error("приложению $target не разрешено открываться по запросу: добавьте его в «Разрешения» → «Кому можно открываться»")
+        }
         if (!android.provider.Settings.canDrawOverlays(context)) {
             error("нужен доступ «поверх других приложений»: без него Android гасит запуск из фона")
         }

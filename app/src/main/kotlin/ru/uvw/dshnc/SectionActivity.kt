@@ -81,6 +81,7 @@ class SectionActivity : AppCompatActivity() {
             "android" -> getString(R.string.menu_android)
             "roots" -> getString(R.string.menu_roots)
             "apps" -> getString(R.string.menu_apps)
+            "apps_pick" -> "Добавить приложение"
             "overlay" -> getString(R.string.menu_overlay)
             "intents" -> "Запуск приложений"
             "perm" -> "Интеграция с андроид"
@@ -105,6 +106,7 @@ class SectionActivity : AppCompatActivity() {
             "intents" -> buildIntents(pad)
             "perm" -> buildPermissions(pad)
             "grants" -> buildGrants(pad)
+            "apps_pick" -> buildAppPicker(pad)
             else -> buildNet(pad)
         }
         scroller = android.widget.ScrollView(this).apply { addView(root) }
@@ -350,13 +352,17 @@ class SectionActivity : AppCompatActivity() {
         if (store.roots.isEmpty()) {
             push(Ui.item(this, getString(R.string.menu_roots_none), null, null))
         } else {
-            for (path in store.roots) push(Ui.item(this, path, null, null))
+            // one directory at a time: "удалить последний" was the only choice before, and a list
+            // a person fills in deserves a list they can take entries out of
+            for (path in store.roots) {
+                push(swipeRow(path, "потяните влево, чтобы удалить", {
+                    store.roots = store.roots - path
+                    recreate()
+                }))
+                push(Ui.divider(this))
+            }
         }
         push(Ui.button(this, getString(R.string.menu_roots_add)) { pickDirectory() })
-        push(Ui.button(this, getString(R.string.menu_roots_drop)) {
-            store.roots = store.roots.dropLast(1)
-            recreate()
-        })
         push(status)
     }
 
@@ -563,29 +569,114 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Who may be woken by a link.
+     *
+     * The same shape as the directories screen: a list a person fills and edits, not a list the
+     * phone decides. Empty means "any app" — and says so, because a whitelist nobody filled
+     * must not look like a refusal.
+     */
     private fun buildIntents (pad: Int) {
-        val overlay = android.provider.Settings.canDrawOverlays(this)
-        push(Ui.itemEx(
-            this,
-            "Запуск из фона",
-            stateLine(overlay),
-            Ui.stateColor(overlay),
-            "Без этого доступа Android молча не откроет чужое приложение: ни навигатор, ни почту",
-            { openOverlaySettings() },
-        ))
+        push(Ui.item(this, "Кому можно открываться", if (store.apps.isEmpty()) "любое приложение" else "${store.apps.size} шт.", null))
+        push(Ui.item(this, "", "Пусто — открывать может любое приложение. Заполнено — только перечисленные.", null))
         push(Ui.divider(this))
-        for ((scheme, sample) in INTENT_SAMPLES) {
-            val names = resolvers(sample)
-            push(Ui.itemEx(
-                this,
-                "$scheme:",
-                if (names.isEmpty()) "некому открыть" else names.take(3).joinToString(", "),
-                Ui.stateColor(names.isNotEmpty()),
-                if (names.size > 3) "ещё ${names.size - 3} — полный список спросите у узла" else "кто ответит на такую ссылку",
-                null,
-            ))
+
+        for (pack in store.apps) {
+            push(swipeRow(appLabel(pack), pack) {
+                store.apps = store.apps - pack
+                recreate()
+            })
             push(Ui.divider(this))
         }
+
+        push(Ui.button(this, "Добавить приложение") { open("apps_pick") })
+        push(Ui.divider(this))
+
+        // what the phone itself answers: the schemes with somebody behind them
+        for ((scheme, sample) in INTENT_SAMPLES) {
+            val names = resolvers(sample)
+            push(Ui.item(this, "$scheme:", if (names.isEmpty()) "некому открыть" else names.take(3).joinToString(", "), null))
+            push(Ui.divider(this))
+        }
+        push(status)
+    }
+
+    /** Every app that can be launched: tapping one adds it to the whitelist and goes back. */
+    private fun buildAppPicker (pad: Int) {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val seen = LinkedHashMap<String, String>()
+        for (info in packageManager.queryIntentActivities(intent, 0)) {
+            val pack = info.activityInfo.packageName
+            if (pack == packageName) continue
+            seen.putIfAbsent(pack, info.loadLabel(packageManager).toString())
+        }
+        push(Ui.item(this, "", "Тап добавляет приложение в список, разрешённый для запуска", null))
+        push(Ui.divider(this))
+        for ((pack, label) in seen.entries.sortedBy { it.value.lowercase() }) {
+            if (store.apps.contains(pack)) continue
+            push(Ui.item(this, label, pack, {
+                store.apps = store.apps + pack
+                finish()
+            }))
+            push(Ui.divider(this))
+        }
+    }
+
+    /** The label an app is known by, or the package when nothing is installed under it. */
+    private fun appLabel (pack: String): String = runCatching {
+        val info = packageManager.getApplicationInfo(pack, 0)
+        packageManager.getApplicationLabel(info).toString()
+    }.getOrDefault(pack)
+
+    /**
+     * A row that reveals "Удалить" when dragged to the left.
+     *
+     * The list is short and lives in a plain ScrollView, so a recycler is not worth its weight;
+     * what a person needs is the ability to drop one entry, and the button behind the row is the
+     * idiom they already know from mail clients.
+     */
+    private fun swipeRow (title: String, subtitle: String?, onDelete: () -> Unit): android.view.View {
+        val density = resources.displayMetrics.density
+        val buttonWidth = (104 * density).toInt()
+        val frame = android.widget.FrameLayout(this)
+        val remove = TextView(this).apply {
+            text = "Удалить"
+            textSize = 15f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(android.graphics.Color.parseColor("#b91c1c"))
+            isClickable = true
+            setOnClickListener { onDelete() }
+        }
+        frame.addView(remove, android.widget.FrameLayout.LayoutParams(buttonWidth, android.widget.FrameLayout.LayoutParams.MATCH_PARENT)
+            .apply { gravity = android.view.Gravity.END })
+        val content = Ui.item(this, title, subtitle, null)
+        frame.addView(content, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { setMargins((16 * density).toInt(), 0, (16 * density).toInt(), 0) })
+
+        var downX = 0f
+        var startX = 0f
+        content.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { downX = event.rawX; startX = view.translationX; false }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - downX).coerceIn(-buttonWidth.toFloat(), 0f)
+                    if (dx < -8f) {
+                        view.translationX = (startX + dx).coerceIn(-buttonWidth.toFloat(), 0f)
+                        true
+                    } else false
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    view.animate().translationX(if (view.translationX < -buttonWidth / 2f) -buttonWidth.toFloat() else 0f)
+                        .setDuration(120).start()
+                    true
+                }
+                else -> false
+            }
+        }
+        return frame
     }
 
     /** The apps that would answer this link, by the label a person knows them by. */

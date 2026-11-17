@@ -178,6 +178,17 @@ class TokenStore(private val context: Context) {
      */
     fun grant (key: String): Boolean = read("grant-$key") != "0"
 
+    /**
+     * The apps allowed to be opened by a link, by package name.
+     *
+     * An empty list means "any app": the node was installed to open things, and a fresh install
+     * that refuses every launch would look broken. A filled list is a whitelist — the person
+     * names who may be woken by a token.
+     */
+    var apps: List<String>
+        get() = read("apps")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
+        set(value) = write("apps", value.distinct().joinToString("\n").ifBlank { null })
+
     fun setGrant (key: String, allowed: Boolean) = write("grant-$key", if (allowed) null else "0")
 
     /**
