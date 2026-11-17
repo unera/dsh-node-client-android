@@ -22,6 +22,9 @@ class SectionActivity : AppCompatActivity() {
 
     /** The schemes the node may open, each with a sample link used to ask Android who handles it. */
     private companion object {
+        /** Where the scroll position travels across a rebuild of the same screen. */
+        const val KEY_SCROLL = "scrollY"
+
         val INTENT_SAMPLES = listOf(
             "geo" to "geo:0,0?q=Москва",
             "tel" to "tel:+70000000000",
@@ -65,6 +68,8 @@ class SectionActivity : AppCompatActivity() {
     private lateinit var store: TokenStore
     private lateinit var root: LinearLayout
     private lateinit var status: TextView
+    /** The list itself: a switch must not move the reader, so the position is saved and restored. */
+    private lateinit var scroller: android.widget.ScrollView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,7 +107,17 @@ class SectionActivity : AppCompatActivity() {
             "grants" -> buildGrants(pad)
             else -> buildNet(pad)
         }
-        setContentView(android.widget.ScrollView(this).apply { addView(root) })
+        scroller = android.widget.ScrollView(this).apply { addView(root) }
+        setContentView(scroller)
+        // a toggle rebuilds the screen (recreate); without this the person lands at the top and
+        // has to find the switch again
+        val keep = savedInstanceState?.getInt(KEY_SCROLL) ?: 0
+        if (keep > 0) scroller.post { scroller.scrollTo(0, keep) }
+    }
+
+    override fun onSaveInstanceState (outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::scroller.isInitialized) outState.putInt(KEY_SCROLL, scroller.scrollY)
     }
 
     private fun buildAuth (pad: Int) {
@@ -429,7 +444,8 @@ class SectionActivity : AppCompatActivity() {
                 grantHint(grant),
                 {
                     store.setGrant(grant.key, !allowed)
-                    // the screen is rebuilt from the store: one truth, no local copies
+                    // rebuilt from the store — one truth, no local copies — and the scroll
+                    // position rides along through onSaveInstanceState
                     recreate()
                 },
             ))
