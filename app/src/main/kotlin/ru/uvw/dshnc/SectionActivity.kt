@@ -692,7 +692,7 @@ class SectionActivity : AppCompatActivity() {
     private fun swipeRow (title: String, subtitle: String?, onDelete: () -> Unit): android.view.View {
         val density = resources.displayMetrics.density
         val buttonWidth = (104 * density).toInt()
-        val frame = android.widget.FrameLayout(this)
+        val content = Ui.item(this, title, subtitle, null)
         val remove = TextView(this).apply {
             text = "Удалить"
             textSize = 15f
@@ -700,40 +700,37 @@ class SectionActivity : AppCompatActivity() {
             setTextColor(android.graphics.Color.WHITE)
             setBackgroundColor(android.graphics.Color.parseColor("#b91c1c"))
             isClickable = true
+            // Gone until the row is swiped: a button that is merely covered depends on the z
+            // order and on every measurement coming out right, which is exactly what went wrong.
+            visibility = android.view.View.GONE
             setOnClickListener { onDelete() }
         }
-        frame.addView(remove, android.widget.FrameLayout.LayoutParams(buttonWidth, android.widget.FrameLayout.LayoutParams.MATCH_PARENT)
-            .apply { gravity = android.view.Gravity.END })
-        val content = Ui.item(this, title, subtitle, null)
-        // No side margins: the row has to cover the button completely, or the button shows
-        // itself without a swipe. `Ui.item` brings its own padding, so the text keeps its place.
-        frame.addView(content, android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-        ))
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(content, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(remove, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT))
+        }
 
         var downX = 0f
-        var startX = 0f
-        content.setOnTouchListener { view, event ->
+        content.setOnTouchListener { _, event ->
             when (event.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> { downX = event.rawX; startX = view.translationX; false }
-                android.view.MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - downX).coerceIn(-buttonWidth.toFloat(), 0f)
-                    if (dx < -8f) {
-                        view.translationX = (startX + dx).coerceIn(-buttonWidth.toFloat(), 0f)
-                        true
-                    } else false
-                }
-                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                    view.animate().translationX(if (view.translationX < -buttonWidth / 2f) -buttonWidth.toFloat() else 0f)
-                        .setDuration(120).start()
+                android.view.MotionEvent.ACTION_DOWN -> { downX = event.rawX; true }
+                android.view.MotionEvent.ACTION_MOVE -> true
+                android.view.MotionEvent.ACTION_UP -> {
+                    val shown = remove.visibility == android.view.View.VISIBLE
+                    val dx = event.rawX - downX
+                    val open = if (shown) dx < (40 * density) else dx < -(40 * density)
+                    remove.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
+                    (remove.layoutParams as LinearLayout.LayoutParams).width = if (open) buttonWidth else 0
+                    remove.requestLayout()
                     true
                 }
                 else -> false
             }
         }
-        return frame
+        return row
     }
+
 
     /** The apps that would answer this link, by the label a person knows them by. */
     private fun resolvers (sample: String): List<String> {
