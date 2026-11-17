@@ -328,8 +328,14 @@ class DeviceApi (private val context: Context) {
         // caller pinned is not necessarily the one that opens.
         val target = chosen?.activityInfo?.packageName ?: intent.`package`
         val allowed = ru.uvw.dshnc.store.TokenStore(context).apps
-        if (allowed.isNotEmpty() && target != null && !allowed.contains(target)) {
+        // An empty list is "nobody", not "anybody": the node opens what the person named, and
+        // nothing else. Naming a few apps is a minute of work; discovering that a token could
+        // dial the bank is not something a default should decide.
+        if (target != null && !allowed.contains(target)) {
             error("приложению $target не разрешено открываться по запросу: добавьте его в «Разрешения» → «Кому можно открываться»")
+        }
+        if (target == null && allowed.isEmpty()) {
+            error("список разрешённых приложений пуст: добавьте приложения в «Разрешения» → «Кому можно открываться»")
         }
         if (!android.provider.Settings.canDrawOverlays(context)) {
             error("нужен доступ «поверх других приложений»: без него Android гасит запуск из фона")

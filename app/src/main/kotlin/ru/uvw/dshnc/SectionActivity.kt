@@ -82,6 +82,7 @@ class SectionActivity : AppCompatActivity() {
             "roots" -> getString(R.string.menu_roots)
             "apps" -> getString(R.string.menu_apps)
             "apps_pick" -> "Добавить приложение"
+            "handlers" -> (intent.getStringExtra("scheme") ?: "Схема")
             "overlay" -> getString(R.string.menu_overlay)
             "intents" -> "Запуск приложений"
             "perm" -> "Интеграция с андроид"
@@ -107,6 +108,7 @@ class SectionActivity : AppCompatActivity() {
             "perm" -> buildPermissions(pad)
             "grants" -> buildGrants(pad)
             "apps_pick" -> buildAppPicker(pad)
+            "handlers" -> buildHandlers(pad)
             else -> buildNet(pad)
         }
         scroller = android.widget.ScrollView(this).apply { addView(root) }
@@ -448,7 +450,7 @@ class SectionActivity : AppCompatActivity() {
         push(Ui.itemEx(
             this,
             "Кому можно открываться",
-            if (store.apps.isEmpty()) "любое приложение" else "${store.apps.size} шт.",
+            if (store.apps.isEmpty()) "никому нельзя" else "${store.apps.size} шт.",
             Ui.stateColor(true),
             "Список приложений, которым разрешено открывать ссылки по запросу извне; пусто — любое",
             { open("intents") },
@@ -587,8 +589,8 @@ class SectionActivity : AppCompatActivity() {
      * must not look like a refusal.
      */
     private fun buildIntents (pad: Int) {
-        push(Ui.item(this, "Кому можно открываться", if (store.apps.isEmpty()) "любое приложение" else "${store.apps.size} шт.", null))
-        push(Ui.item(this, "", "Пусто — открывать может любое приложение. Заполнено — только перечисленные.", null))
+        push(Ui.item(this, "Кому можно открываться", if (store.apps.isEmpty()) "никому нельзя" else "${store.apps.size} шт.", null))
+        push(Ui.item(this, "", "Пусто — не открывается ничего. В список попадают только добавленные приложения: их обычно немного.", null))
         push(Ui.divider(this))
 
         for (pack in store.apps) {
@@ -602,13 +604,55 @@ class SectionActivity : AppCompatActivity() {
         push(Ui.button(this, "Добавить приложение") { open("apps_pick") })
         push(Ui.divider(this))
 
-        // what the phone itself answers: the schemes with somebody behind them
+        // what the phone itself answers: a tap shows who, and lets one of them be allowed
+        push(Ui.item(this, "Схемы ссылок", "Тап — кто отвечает на такую ссылку", null))
+        push(Ui.divider(this))
         for ((scheme, sample) in INTENT_SAMPLES) {
             val names = resolvers(sample)
-            push(Ui.item(this, "$scheme:", if (names.isEmpty()) "некому открыть" else names.take(3).joinToString(", "), null))
+            push(Ui.item(
+                this,
+                "$scheme:",
+                if (names.isEmpty()) "некому открыть" else names.take(3).joinToString(", "),
+                { startActivity(Intent(this, SectionActivity::class.java).putExtra("section", "handlers").putExtra("sample", sample).putExtra("scheme", scheme)) },
+            ))
             push(Ui.divider(this))
         }
         push(status)
+    }
+
+    /**
+     * Who answers one scheme, and a way to try it.
+     *
+     * The same list the node would get from `intent_query`, shown to the person: a tap allows
+     * that app, the button at the bottom opens the sample so the choice can be seen working.
+     */
+    private fun buildHandlers (pad: Int) {
+        val sample = intent.getStringExtra("sample") ?: return
+        val scheme = intent.getStringExtra("scheme") ?: sample.substringBefore(':')
+        push(Ui.item(this, "$scheme:", sample, null))
+        push(Ui.divider(this))
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(sample))
+        for (info in packageManager.queryIntentActivities(intent, 0)) {
+            val pack = info.activityInfo.packageName
+            val allowed = store.apps.contains(pack)
+            push(Ui.itemEx(
+                this,
+                info.loadLabel(packageManager).toString(),
+                if (allowed) "разрешено" else "не в списке",
+                Ui.stateColor(allowed),
+                pack,
+                {
+                    if (!allowed) {
+                        store.apps = store.apps + pack
+                        recreate()
+                    }
+                },
+            ))
+            push(Ui.divider(this))
+        }
+        push(Ui.button(this, "Открыть пример") {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sample))) }
+        })
     }
 
     /** Every app that can be launched: tapping one adds it to the whitelist and goes back. */

@@ -13,11 +13,11 @@ import org.junit.Test
 class AppWhitelistTest {
     /** The same decision the launch makes, kept pure for the test. */
     private fun allowed (list: List<String>, target: String?): Boolean =
-        list.isEmpty() || target == null || list.contains(target)
+        target != null && list.contains(target)
 
     @Test
-    fun `an empty list lets anything open`() {
-        assertTrue(allowed(emptyList(), "ru.yandex.yandexnavi"))
+    fun `an empty list lets nothing open`() {
+        assertFalse(allowed(emptyList(), "ru.yandex.yandexnavi"))
     }
 
     @Test
@@ -28,8 +28,10 @@ class AppWhitelistTest {
     }
 
     @Test
-    fun `a launch the system could not resolve is not refused by the list`() {
-        // nothing resolved: the refusal is the system's to make, not the whitelist's
-        assertTrue(allowed(listOf("ru.yandex.yandexnavi"), null))
+    fun `a launch the system could not resolve is refused with its own sentence`() {
+        // nothing resolved and nothing named: there is no app to allow, so the answer says the
+        // list is empty rather than blaming an app that does not exist
+        assertFalse(allowed(emptyList(), null))
+        assertFalse(allowed(listOf("ru.yandex.yandexnavi"), null))
     }
 }
