@@ -101,7 +101,6 @@ class SectionActivity : AppCompatActivity() {
 
         when (section) {
             "auth" -> buildAuth(pad)
-            "android" -> { buildAndroid(pad); buildDebug(pad) }
             "roots" -> buildRoots()
             "apps" -> buildApps(pad)
             "intents" -> buildIntents(pad)
@@ -229,54 +228,6 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * The list of the phone's capabilities.
-     *
-     * Each item: the name, the state and a short explanation of why. A tap leads to
-     * where that is changed — into the system dialog, or to our own screen if the
-     * setting consists of several parts.
-     */
-    private fun buildAndroid (pad: Int) {
-        // an OEM build may refuse the call, and a settings screen must survive that
-        val allFiles = runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
-        push(Ui.itemEx(
-            this,
-            getString(R.string.menu_fs_access),
-            stateLine(allFiles),
-            Ui.stateColor(allFiles),
-            getString(R.string.help_all_files),
-            { openAllFiles() },
-        ))
-        push(Ui.divider(this))
-        push(Ui.itemEx(
-            this,
-            getString(R.string.menu_apps),
-            "${stateLine(true)} · ${visibleApps()}",
-            Ui.stateColor(true),
-            getString(R.string.help_apps),
-            { open("apps") },
-        ))
-        push(Ui.divider(this))
-        push(Ui.itemEx(
-            this,
-            getString(R.string.menu_roots),
-            dirsPhrase(store.roots.size),
-            Ui.stateColor(store.roots.isNotEmpty()),
-            getString(R.string.help_roots),
-            { open("roots") },
-        ))
-        push(Ui.divider(this))
-        // the permissions moved to a screen of their own: a person looking for "what may this
-        // node do" should not read about directories and app lists on the way
-        push(Ui.itemEx(
-            this,
-            "Разрешения",
-            "${permissionsReady()} из $permissionRows",
-            Ui.stateColor(permissionsReady() == permissionRows),
-            "Камера, фон, будильники, запуск приложений — что узел уже может и чего ему не хватает",
-            { open("perm") },
-        ))
-    }
 
     override fun onResume () {
         super.onResume()
@@ -374,21 +325,6 @@ class SectionActivity : AppCompatActivity() {
         return packageManager.queryIntentActivities(intent, 0).size
     }
 
-    /** What exactly the node sees: the packages and the names. */
-    /**
-     * The debug switch: `session.debug_info` is off unless the owner allows it, and the only place
-     * that used to grant it was the settings screen nobody could reach.
-     */
-    private fun buildDebug (pad: Int) {
-        val debug = android.widget.CheckBox(this).apply {
-            text = getString(R.string.menu_debug_info)
-            isChecked = store.debugInfo
-            setPadding(0, pad, 0, 0)
-        }
-        debug.setOnCheckedChangeListener { _, checked -> store.debugInfo = checked }
-        root.addView(Ui.divider(this))
-        root.addView(debug)
-    }
 
 
     /**
@@ -554,16 +490,6 @@ class SectionActivity : AppCompatActivity() {
         getSystemService(android.os.PowerManager::class.java)?.isIgnoringBatteryOptimizations(packageName) == true
     }.getOrDefault(false)
 
-    /** How many of the permissions are already granted — the number the section shows. */
-    private fun permissionsReady (): Int {
-        var ready = 0
-        if (checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) ready += 1
-        if (android.provider.Settings.canDrawOverlays(this)) ready += 1
-        if (exactAlarms()) ready += 1
-        if (batteryFree()) ready += 1
-        if (PopupPermission.allowed(this)) ready += 1
-        return ready
-    }
 
     private fun openExactAlarmSettings () {
         try {
@@ -767,11 +693,6 @@ class SectionActivity : AppCompatActivity() {
             .distinct()
     }
 
-    /** One line for the section: how many schemes have somebody to open them. */
-    private fun schemeCount (): String {
-        val ready = INTENT_SAMPLES.count { resolvers(it.second).isNotEmpty() }
-        return "$ready из ${INTENT_SAMPLES.size}"
-    }
 
     private fun buildApps (pad: Int) {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)

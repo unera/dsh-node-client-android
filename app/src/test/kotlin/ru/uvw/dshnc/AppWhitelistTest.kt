@@ -7,8 +7,8 @@ import org.junit.Test
 /**
  * The app whitelist, as a rule rather than as a screen.
  *
- * An empty list means "any app" — a fresh node that refused every launch would look broken —
- * and a filled one is a whitelist. The rule is written here so the screen cannot drift from it.
+ * An empty list means nobody, a filled one names who may be woken. The rule is written here so
+ * the screen cannot drift from it.
  */
 class AppWhitelistTest {
     /** The same decision the launch makes, kept pure for the test. */

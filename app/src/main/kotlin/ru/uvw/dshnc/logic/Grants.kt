@@ -37,7 +37,9 @@ object Grants {
      * a node.
      */
     fun needed (method: String): Grant? = when {
-        method == "exec" -> Grant.SHELL
+        // `pipeToDevice`/`pipeFromDevice` run a command through `sh -c` exactly like `exec`:
+        // a switch that stops one and lets the other through is not a switch.
+        method == "exec" || method == "pipeToDevice" || method == "pipeFromDevice" -> Grant.SHELL
         method.startsWith("alarm_") -> Grant.ALARMS
         method.startsWith("intent_") -> Grant.INTENTS
         method == "camera_snap" || method == "photos_latest" -> Grant.CAMERA
@@ -45,7 +47,7 @@ object Grants {
             method == "copyToDevice" || method == "copyFromDevice" || method == "list" ||
             method == "stat" || method == "sha256" || method == "roots" -> Grant.FILES
         method == "debug_info" -> Grant.DEBUG
-        method == "devices" || method == "apps" -> Grant.DEBUG
+        method == "apps" -> Grant.DEBUG
         method == "post" || method == "ask" -> Grant.NOTIFY
         method == "say" || method == "stop" || method == "chat" || method == "activity" ||
             method == "answer" || method == "play" || method == "record" || method == "caps" -> Grant.VOICE

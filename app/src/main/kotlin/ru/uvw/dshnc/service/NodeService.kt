@@ -471,6 +471,9 @@ class NodeService : Service() {
                     // costs one round and the streak still ends the fight if it is real.
                     runCatching { TokenStore(this).addEvent("replaced-переподключение", "$text #$replacedStreak") }
                     log("вытеснение на переподключении ($replacedStreak): $text — пробуем снова")
+                    // The wait loop is parked on this signal; without it the next round starts
+                    // only after its own one-minute timeout, and "one round" becomes a minute.
+                    closedSignal.trySend(Unit)
                     return
                 }
                 runCatching { TokenStore(this).addEvent("replaced", text) }

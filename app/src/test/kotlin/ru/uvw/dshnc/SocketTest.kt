@@ -54,6 +54,7 @@ class SocketTest {
     /** A server side that records what the node sends and can talk back. */
     private inner class Peer : WebSocketListener() {
         val lines = java.util.concurrent.CopyOnWriteArrayList<String>()
+        private val frames = java.util.concurrent.CountDownLatch(1)
         val closed = AtomicReference<Pair<Int, String>?>(null)
         val closeLatch = CountDownLatch(1)
         var socket: WebSocket? = null
@@ -65,6 +66,14 @@ class SocketTest {
 
         override fun onMessage (webSocket: WebSocket, text: String) {
             lines.add(text)
+            frames.countDown()
+        }
+
+        /** Wait for a frame that has already arrived or is about to: no fixed sleep, no race. */
+        fun nextLine (timeout: Long, unit: TimeUnit): String {
+            frames.await(timeout, unit)
+            Thread.sleep(20)
+            return lines.firstOrNull() ?: throw AssertionError("кадр не пришёл за $timeout ${unit.name.lowercase()}")
         }
 
         override fun onClosing (webSocket: WebSocket, code: Int, reason: String) {
@@ -102,7 +111,9 @@ class SocketTest {
         val socket = client()
         socket.connect()
         assertTrue("канал не открылся", opened.await(5, TimeUnit.SECONDS))
-        val first = JSONObject(peer.lines.first())
+        // The open and the first frame are two events, and the frame may arrive a moment later:
+        // waiting for the open alone was a race that failed on a loaded machine.
+        val first = JSONObject(peer.nextLine(5, TimeUnit.SECONDS))
         assertEquals("state", first.optString("t"))
         assertEquals(160L, first.optLong("epoch"))
         assertEquals(1030L, first.optLong("client_epoch"))

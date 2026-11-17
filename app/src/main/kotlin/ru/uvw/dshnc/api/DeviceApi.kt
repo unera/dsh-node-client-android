@@ -323,14 +323,12 @@ class DeviceApi (private val context: Context) {
                 runCatching { manager.getPackageInfo(packageName, 0) }.isSuccess
             if (!installed) error("некому открыть: подходящего приложения нет")
         }
-        // The whitelist from the "Разрешения" screen: empty means any app, filled means only
-        // those. Checked after the system has named who would answer, because a package the
-        // caller pinned is not necessarily the one that opens.
+        // The whitelist from the "Разрешения" screen: only what it names may open. Checked after
+        // the system has named who would answer, because a package the caller pinned is not
+        // necessarily the one that opens.
         val target = chosen?.activityInfo?.packageName ?: intent.`package`
         val allowed = ru.uvw.dshnc.store.TokenStore(context).apps
-        // An empty list is "nobody", not "anybody": the node opens what the person named, and
-        // nothing else. Naming a few apps is a minute of work; discovering that a token could
-        // dial the bank is not something a default should decide.
+        // An empty list is "nobody": a refusal here names the screen that fills it.
         if (target != null && !allowed.contains(target)) {
             error("приложению $target не разрешено открываться по запросу: добавьте его в «Разрешения» → «Кому можно открываться»")
         }

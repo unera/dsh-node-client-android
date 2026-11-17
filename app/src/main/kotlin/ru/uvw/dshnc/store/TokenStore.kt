@@ -181,9 +181,9 @@ class TokenStore(private val context: Context) {
     /**
      * The apps allowed to be opened by a link, by package name.
      *
-     * An empty list means "any app": the node was installed to open things, and a fresh install
-     * that refuses every launch would look broken. A filled list is a whitelist — the person
-     * names who may be woken by a token.
+     * An empty list means "nobody": the person names the apps a token may wake. Naming a few is a
+     * minute of work, and a default that opens the dialer and the bank is not one to decide
+     * silently.
      */
     var apps: List<String>
         get() = read("apps")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()

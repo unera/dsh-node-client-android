@@ -76,13 +76,10 @@ class SessionApi(private val context: Context) {
             return JSONObject().put("status", "error")
                 .put("code", "unknown_method").put("message", "нет такого метода: $method")
         }
+        // The gate is the DEBUG grant, checked before dispatch: a second, older switch lived here
+        // and had no screen left to turn it on, so the method answered a refusal that pointed at
+        // nothing. One switch, one place.
         val store = TokenStore(context)
-        if (!store.debugInfo) {
-            return JSONObject().put("status", "error").put("code", "disabled").put(
-                "message",
-                "debug_info выключен владельцем телефона: включи его в настройках приложения",
-            )
-        }
         val heartbeat = store.heartbeat
         val payload = JSONObject()
             .put("version", BuildConfig.VERSION_NAME)

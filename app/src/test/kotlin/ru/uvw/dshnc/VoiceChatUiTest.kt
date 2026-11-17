@@ -1218,11 +1218,12 @@ class SettingsReachabilityTest {
     }
 
     @Test
-    fun `the android section carries the debug switch`() {
-        val screen = open("android")
+    fun `the grants screen carries the debug switch`() {
+        val screen = open("grants")
         try {
             val found = texts(screen)
-            assertTrue("debug-переключателя нет; на экране: $found", found.any { it.contains("debug_info", ignoreCase = true) })
+            assertTrue("переключателя отладки нет; на экране: $found",
+                found.any { it.contains("Отладочные сведения", ignoreCase = true) })
         } finally {
             screen.finish()
         }
