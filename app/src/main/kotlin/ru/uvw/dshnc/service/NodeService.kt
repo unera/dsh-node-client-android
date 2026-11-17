@@ -37,6 +37,7 @@ import ru.uvw.dshnc.api.Socket
 import ru.uvw.dshnc.logic.Action
 import ru.uvw.dshnc.logic.AuthFailure
 import ru.uvw.dshnc.logic.ChannelClose
+import ru.uvw.dshnc.logic.Eviction
 import ru.uvw.dshnc.logic.ChannelState
 import ru.uvw.dshnc.logic.Commandno
 import ru.uvw.dshnc.logic.Generation
@@ -93,6 +94,16 @@ class NodeService : Service() {
     private val voice by lazy {
         VoiceApi(this).also { voiceApi = it }
     }
+
+    /**
+     * How many `4001 replaced` closes arrived in a row since the channel last opened.
+     *
+     * The server closes the older socket whenever a newer connection arrives, and our own
+     * reconnect is such a connection: a socket closed a moment ago finishes its handshake late,
+     * the server keeps that one and drops this one. Treated as "another instance took over",
+     * that put the node to sleep until a person opened the app — see [Eviction].
+     */
+    private var replacedStreak = 0
 
     /** The server generation we know; null — we know none and the next announce says so. */
     @Volatile private var epoch: Long? = null
@@ -301,6 +312,8 @@ class NodeService : Service() {
                             return@Socket
                         }
                         runCatching { TokenStore(this@NodeService).addEvent("open") }
+                        // the channel is up: whoever pushed us out before is history
+                        replacedStreak = Eviction.onOpen()
                         // the channel is up: from now on every attempt is a reconnect
                         channelOpen = true
                         everOpen = true
@@ -328,9 +341,16 @@ class NodeService : Service() {
                 channelOpen = false
                 runCatching { TokenStore(this@NodeService).addEvent("соединение", "№$clientEpoch") }
                 channel.connect()
-                // we wait for the opening: otherwise the wait loop exits right away
-                delay(500)
-                if (!channelOpen) delay(RECONNECT_MS)
+                // Wait for the handshake itself instead of a fixed pause. While a connect is in
+                // flight no other attempt starts, so two sockets never carry one client epoch —
+                // which is what made the server replace the current one with our own late
+                // handshake. Bounded, because a connect that never answers is a dead end.
+                val openUntil = System.currentTimeMillis() + RECONNECT_MS
+                while (!channelOpen && !stopRequested && channelRef === channel &&
+                    System.currentTimeMillis() < openUntil
+                ) {
+                    delay(100)
+                }
                 startPing(channel)
                 // we wait while the channel is alive; it closed — we go for another round
                 // and reconnect, otherwise the node falls silent after a server restart
@@ -444,6 +464,15 @@ class NodeService : Service() {
         refresh()
         when (Generation.onClose(code, reason)) {
             Action.STOP -> {
+                replacedStreak = Eviction.onReplaced(replacedStreak)
+                if (!Eviction.sleep(replacedStreak)) {
+                    // our own churn: a late handshake from a socket we closed pushed this one
+                    // out. Sleeping here is what left the node offline for hours; reconnecting
+                    // costs one round and the streak still ends the fight if it is real.
+                    runCatching { TokenStore(this).addEvent("replaced-переподключение", "$text #$replacedStreak") }
+                    log("вытеснение на переподключении ($replacedStreak): $text — пробуем снова")
+                    return
+                }
                 runCatching { TokenStore(this).addEvent("replaced", text) }
                 // only a channel we still hold reaches this line: the stale ones are filtered
                 // above, and that filter is what keeps our own replacement from switching the
