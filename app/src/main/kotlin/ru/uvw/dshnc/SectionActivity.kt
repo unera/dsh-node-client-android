@@ -714,8 +714,21 @@ class SectionActivity : AppCompatActivity() {
         var downX = 0f
         content.setOnTouchListener { _, event ->
             when (event.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> { downX = event.rawX; true }
-                android.view.MotionEvent.ACTION_MOVE -> true
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    // The list lives in a ScrollView, and a ScrollView takes a drag for itself the
+                    // moment it reads one. Telling it not to is what lets the row see the end of a
+                    // horizontal gesture instead of losing it half-way.
+                    content.parent?.requestDisallowInterceptTouchEvent(true)
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downX
+                    if (kotlin.math.abs(dx) > 24 * density) {
+                        content.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    true
+                }
                 android.view.MotionEvent.ACTION_UP -> {
                     val shown = remove.visibility == android.view.View.VISIBLE
                     val dx = event.rawX - downX
