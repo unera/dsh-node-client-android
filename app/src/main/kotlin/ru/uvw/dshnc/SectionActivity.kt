@@ -711,11 +711,21 @@ class SectionActivity : AppCompatActivity() {
             addView(remove, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT))
         }
 
+        /** Width of the revealed button: zero when closed, `buttonWidth` when fully open. */
+        fun reveal (width: Int) {
+            val clamped = width.coerceIn(0, buttonWidth)
+            remove.visibility = if (clamped > 0) android.view.View.VISIBLE else android.view.View.GONE
+            (remove.layoutParams as LinearLayout.LayoutParams).width = clamped
+            remove.requestLayout()
+        }
+
         var downX = 0f
+        var startWidth = 0
         content.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 android.view.MotionEvent.ACTION_DOWN -> {
                     downX = event.rawX
+                    startWidth = (remove.layoutParams as LinearLayout.LayoutParams).width
                     // The list lives in a ScrollView, and a ScrollView takes a drag for itself the
                     // moment it reads one. Telling it not to is what lets the row see the end of a
                     // horizontal gesture instead of losing it half-way.
@@ -723,19 +733,23 @@ class SectionActivity : AppCompatActivity() {
                     true
                 }
                 android.view.MotionEvent.ACTION_MOVE -> {
+                    // The row follows the finger: the button takes width as the drag goes left and
+                    // gives it back as the drag returns. Nothing appears only after a pause — a
+                    // list that answers on the release alone feels broken.
                     val dx = event.rawX - downX
-                    if (kotlin.math.abs(dx) > 24 * density) {
+                    if (kotlin.math.abs(dx) > 16 * density) {
                         content.parent?.requestDisallowInterceptTouchEvent(true)
+                        reveal(startWidth - dx.toInt())
                     }
                     true
                 }
                 android.view.MotionEvent.ACTION_UP -> {
-                    val shown = remove.visibility == android.view.View.VISIBLE
-                    val dx = event.rawX - downX
-                    val open = if (shown) dx < (40 * density) else dx < -(40 * density)
-                    remove.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
-                    (remove.layoutParams as LinearLayout.LayoutParams).width = if (open) buttonWidth else 0
-                    remove.requestLayout()
+                    val width = (remove.layoutParams as LinearLayout.LayoutParams).width
+                    reveal(if (width > buttonWidth / 2) buttonWidth else 0)
+                    true
+                }
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    reveal(0)
                     true
                 }
                 else -> false
