@@ -21,7 +21,9 @@ class MenuActivity : AppCompatActivity() {
         root.addView(Ui.item(this, getString(R.string.menu_net), getString(R.string.menu_net_sub)) { open("net") })
 
         root.addView(Ui.group(this, getString(R.string.menu_group_phone)))
-        root.addView(Ui.item(this, getString(R.string.menu_android), getString(R.string.menu_android_sub)) { open("android") })
+        root.addView(Ui.item(this, "Интеграция с андроид", "Разрешения системы: файлы, поверх приложений, батарея") { open("perm") })
+        root.addView(Ui.divider(this))
+        root.addView(Ui.item(this, "Разрешения", "Здесь можно ограничить перечень действий, доступных DSH по управлению данным устройством") { open("grants") })
         root.addView(Ui.divider(this))
         // the voice chat has enough choices of its own to deserve a screen
         root.addView(Ui.item(this, "Голосовой чат", "Режим записи, показ ответов, синтез") {

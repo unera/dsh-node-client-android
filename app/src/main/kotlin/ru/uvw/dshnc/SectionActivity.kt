@@ -78,7 +78,8 @@ class SectionActivity : AppCompatActivity() {
             "apps" -> getString(R.string.menu_apps)
             "overlay" -> getString(R.string.menu_overlay)
             "intents" -> "Запуск приложений"
-            "perm" -> "Разрешения"
+            "perm" -> "Интеграция с андроид"
+            "grants" -> "Разрешения"
             else -> getString(R.string.menu_net)
         }
         // the same screen and the same style as the menu: the third level must not
@@ -98,6 +99,7 @@ class SectionActivity : AppCompatActivity() {
             "apps" -> buildApps(pad)
             "intents" -> buildIntents(pad)
             "perm" -> buildPermissions(pad)
+            "grants" -> buildGrants(pad)
             else -> buildNet(pad)
         }
         setContentView(android.widget.ScrollView(this).apply { addView(root) })
@@ -380,18 +382,19 @@ class SectionActivity : AppCompatActivity() {
      * A row that leads to the system screen is always live: a permission can be granted AND
      * revoked there, and a one-way row would lock the person out of their own decision.
      */
+    /**
+     * The Android side: what the system granted, and nothing else.
+     *
+     * Only permissions a person can grant by tapping a system screen live here — the camera and
+     * the alarms are ours to switch on the "Разрешения" screen, not the system's, and a list of
+     * applications is not a permission at all.
+     */
     private fun buildPermissions (pad: Int) {
-        val camera = checkSelfPermission(android.Manifest.permission.CAMERA) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        push(permissionRow(getString(R.string.menu_camera), camera, getString(R.string.help_camera)) { askCamera() })
+        val allFiles = runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
+        push(permissionRow(getString(R.string.menu_fs_access), allFiles, getString(R.string.help_all_files)) { openAllFiles() })
 
         val overlay = android.provider.Settings.canDrawOverlays(this)
         push(permissionRow(getString(R.string.menu_overlay), overlay, getString(R.string.help_overlay)) { openOverlaySettings() })
-
-        push(permissionRow(
-            "Точные будильники", exactAlarms(),
-            "Без этого система сдвигает будильник: «через полчаса» станет «когда удобно»",
-        ) { openExactAlarmSettings() })
 
         push(permissionRow(
             "Батарея без ограничений", batteryFree(),
@@ -403,13 +406,57 @@ class SectionActivity : AppCompatActivity() {
             getString(R.string.menu_popup), popup,
             getString(if (popup) R.string.popup_allowed else R.string.popup_denied),
         ) { PopupPermission.open(this) })
+    }
 
+    /**
+     * Our own switches: what the node will answer for.
+     *
+     * A different question from the one above — the system says whether the app *may*, this
+     * says whether the node *will*. The person behind each is different too: the phone's owner
+     * grants Android permissions, the node's owner decides what a token is worth.
+     */
+    private fun buildGrants (pad: Int) {
+        push(Ui.item(this, "Что это", "Здесь можно ограничить перечень действий, доступных DSH по управлению данным устройством", null))
         push(Ui.divider(this))
+
+        for (grant in ru.uvw.dshnc.logic.Grants.Grant.entries) {
+            val allowed = store.grant(grant.key)
+            push(Ui.itemEx(
+                this,
+                grant.title,
+                if (allowed) "включено" else "выключено",
+                Ui.stateColor(allowed),
+                grantHint(grant),
+                {
+                    store.setGrant(grant.key, !allowed)
+                    // the screen is rebuilt from the store: one truth, no local copies
+                    recreate()
+                },
+            ))
+            push(Ui.divider(this))
+        }
+
         push(Ui.itemEx(
-            this, "Запуск приложений", schemeCount(), Ui.stateColor(true),
-            "Кто на этом телефоне откроет ссылку: навигатор, почта, браузер",
-            { open("intents") },
+            this,
+            "Доступ к каталогам",
+            dirsPhrase(store.roots.size),
+            Ui.stateColor(store.roots.isNotEmpty()),
+            getString(R.string.help_roots),
+            { open("roots") },
         ))
+        push(Ui.divider(this))
+    }
+
+    /** One sentence per switch: what a person loses by turning it off. */
+    private fun grantHint (grant: ru.uvw.dshnc.logic.Grants.Grant): String = when (grant) {
+        ru.uvw.dshnc.logic.Grants.Grant.SHELL -> "Выключено — exec отвечает отказом, команды на телефоне не выполняются"
+        ru.uvw.dshnc.logic.Grants.Grant.ALARMS -> "Выключено — управление будильниками отвечает ошибкой"
+        ru.uvw.dshnc.logic.Grants.Grant.INTENTS -> "Выключено — открыть навигатор или браузер по ссылке нельзя"
+        ru.uvw.dshnc.logic.Grants.Grant.FILES -> "Выключено — файлы и каталоги недоступны, остаётся только оболочка"
+        ru.uvw.dshnc.logic.Grants.Grant.DEBUG -> "Выключено — список приложений и отладочные сведения не отдаются"
+        ru.uvw.dshnc.logic.Grants.Grant.VOICE -> "Выключено — голосовой чат и синтез не работают"
+        ru.uvw.dshnc.logic.Grants.Grant.CAMERA -> "Выключено — снимок и список фотографий отвечают отказом"
+        ru.uvw.dshnc.logic.Grants.Grant.NOTIFY -> "Выключено — уведомления и вопросы на телефоне не показываются"
     }
 
     /** One permission line: a title, a state, and a sentence about what happens without it. */

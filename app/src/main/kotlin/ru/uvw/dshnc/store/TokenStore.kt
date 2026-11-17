@@ -170,6 +170,17 @@ class TokenStore(private val context: Context) {
         set(value) = write("enabled", if (value) "1" else null)
 
     /**
+     * One switch from the "Разрешения" screen.
+     *
+     * Granted unless the person turned it off: the node was installed to do these things, and a
+     * fresh install that answers nothing would look broken. `null` is "not decided yet", which
+     * is why the default is `true` rather than a stored value.
+     */
+    fun grant (key: String): Boolean = read("grant-$key") != "0"
+
+    fun setGrant (key: String, allowed: Boolean) = write("grant-$key", if (allowed) null else "0")
+
+    /**
      * A newer instance of this node took the channel (`4001 replaced`) and this one stopped.
      *
      * The flag exists because stopping is not enough: the ten-minute alarm used to bring the

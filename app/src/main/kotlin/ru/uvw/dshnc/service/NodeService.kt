@@ -730,7 +730,15 @@ class NodeService : Service() {
             // Service commands go first: they come with `api = -1` and a name starting
             // with `#`, are handled by the client itself and must not fall through to
             // `files`
+            // The switches from the "Разрешения" screen come first: a method the person turned
+            // off answers with a sentence naming the switch, not with silence and not with the
+            // next dispatcher's guess about what was meant.
+            val refused = ru.uvw.dshnc.logic.Grants.needed(method)?.let { grant ->
+                if (ru.uvw.dshnc.logic.Grants.allows(method) { ru.uvw.dshnc.store.TokenStore(this).grant(it.key) }) null
+                else ru.uvw.dshnc.logic.Grants.refusal(grant)
+            }
             val outcome = when {
+                refused != null -> JSONObject().put("status", "error").put("code", "grant_denied").put("message", refused)
                 // the dialog answers for a cancel that has its number; anything else is the
                 // shell registry's business
                 method.startsWith("#") -> dialog.control(method, args) ?: voice.control(method, args)
