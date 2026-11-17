@@ -468,6 +468,7 @@ class SectionActivity : AppCompatActivity() {
         ru.uvw.dshnc.logic.Grants.Grant.SHELL -> "Выключено — exec отвечает отказом, команды на телефоне не выполняются"
         ru.uvw.dshnc.logic.Grants.Grant.ALARMS -> "Выключено — управление будильниками отвечает ошибкой"
         ru.uvw.dshnc.logic.Grants.Grant.INTENTS -> "Выключено — открыть навигатор или браузер по ссылке нельзя"
+        ru.uvw.dshnc.logic.Grants.Grant.COMMANDS -> "Выключено — молчаливые команды приложениям не отправляются: так переключают VPN, плеер, умный дом"
         ru.uvw.dshnc.logic.Grants.Grant.FILES -> "Выключено — файлы и каталоги недоступны, остаётся только оболочка"
         ru.uvw.dshnc.logic.Grants.Grant.DEBUG -> "Выключено — список приложений и отладочные сведения не отдаются"
         ru.uvw.dshnc.logic.Grants.Grant.VOICE -> "Выключено — голосовой чат и синтез не работают"

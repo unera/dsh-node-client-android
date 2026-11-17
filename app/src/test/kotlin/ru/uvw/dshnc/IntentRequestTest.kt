@@ -83,6 +83,25 @@ class IntentRequestTest {
     }
 
     @Test
+    fun `a command needs an app to receive it`() {
+        // A broadcast or a service has no screen to fall back on: the caller names the package,
+        // and without one the request is refused before anything is sent.
+        val refused = runCatching {
+            IntentRequest.parse(mapOf("action" to "com.example.SET_ON"), IntentRequest.Kind.BROADCAST)
+        }.exceptionOrNull()
+        assertTrue(refused is IllegalArgumentException)
+        assertTrue(refused?.message?.contains("package") == true)
+        val sent = IntentRequest.parse(
+            mapOf("action" to "com.example.SET_ON", "package" to "com.example.app"),
+            IntentRequest.Kind.BROADCAST,
+        )
+        assertEquals(IntentRequest.Kind.BROADCAST, sent.kind)
+        assertEquals("com.example.app", sent.packageName)
+        // no data is required for a command: the action and the extras are the whole message
+        assertNull(sent.data)
+    }
+
+    @Test
     fun `a package pins the request to one app`() {
         val request = IntentRequest.parse(mapOf("data" to "geo:55.75,37.61", "package" to "ru.yandex.yandexmaps"))
         assertEquals("ru.yandex.yandexmaps", request.packageName)

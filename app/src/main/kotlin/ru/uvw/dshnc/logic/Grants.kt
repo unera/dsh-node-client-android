@@ -17,6 +17,7 @@ object Grants {
         SHELL("shell", "Команды оболочки"),
         ALARMS("alarms", "Будильники"),
         INTENTS("intents", "Запуск приложений"),
+        COMMANDS("commands", "Команды приложениям"),
         FILES("files", "Доступ к файлам"),
         DEBUG("debug", "Отладочные сведения"),
         VOICE("voice", "Голос"),
@@ -41,6 +42,9 @@ object Grants {
         // a switch that stops one and lets the other through is not a switch.
         method == "exec" || method == "pipeToDevice" || method == "pipeFromDevice" -> Grant.SHELL
         method.startsWith("alarm_") -> Grant.ALARMS
+        // Opening a screen and sending a command to an app are different promises: the first is
+        // visible, the second happens silently, so it gets its own switch.
+        method == "intent_broadcast" || method == "intent_service" -> Grant.COMMANDS
         method.startsWith("intent_") -> Grant.INTENTS
         method == "camera_snap" || method == "photos_latest" -> Grant.CAMERA
         method == "read" || method == "write" || method == "edit" || method == "mkdir" ||

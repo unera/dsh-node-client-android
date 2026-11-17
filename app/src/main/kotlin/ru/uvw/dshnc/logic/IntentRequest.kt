@@ -18,7 +18,12 @@ data class IntentRequest (
     val packageName: String? = null,
     val className: String? = null,
     val extras: Map<String, Any> = emptyMap(),
+    /** How the intent travels: an activity to the screen, a broadcast, or a service. */
+    val kind: Kind = Kind.ACTIVITY,
 ) {
+    /** The three ways an app is woken. Each has its own rules about who must be named. */
+    enum class Kind { ACTIVITY, BROADCAST, SERVICE }
+
     companion object {
         /** The actions a remote request may name. Anything else is somebody's own business. */
         val ACTIONS = setOf(
@@ -51,12 +56,22 @@ data class IntentRequest (
          * @returns the request, ready to be turned into an Intent.
          * @throws IllegalArgumentException with a sentence a person can act on.
          */
-        fun parse (args: Map<String, Any?>): IntentRequest {
+        fun parse (args: Map<String, Any?>, kind: Kind = Kind.ACTIVITY): IntentRequest {
             val rawAction = (args["action"] as? String)?.trim().orEmpty()
             val data = (args["data"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
             val action = (if (rawAction.isEmpty()) (if (data != null) VIEW else "") else rawAction)
                 .let { if (it.isEmpty()) throw IllegalArgumentException("нужен action или data") else it }
-            if (!ACTIONS.contains(action)) throw IllegalArgumentException("действие не разрешено: $action")
+            // A broadcast or a service has no screen to fall back on: the system cannot resolve
+            // "whoever listens", and an implicit command is a message to the whole system.
+            if (kind != Kind.ACTIVITY && ((args["package"] as? String)?.trim().isNullOrEmpty())) {
+                throw IllegalArgumentException("для $action нужно назвать package: команду шлём конкретному приложению")
+            }
+            // A command names its own action — `com.wireguard.android.action.SET_TUNNEL_UP` and the
+            // like — so the standard list cannot govern it. What governs it is the package: a
+            // command goes to a named app or nowhere.
+            if (kind == Kind.ACTIVITY && !ACTIONS.contains(action)) {
+                throw IllegalArgumentException("действие не разрешено: $action")
+            }
             if (action == VIEW || action.endsWith(".SENDTO") || action.endsWith(".DIAL")) {
                 if (data == null) throw IllegalArgumentException("для $action нужен data: адрес или ссылка")
             }
@@ -82,6 +97,7 @@ data class IntentRequest (
                 }
             }
             return IntentRequest(
+                kind = kind,
                 action = action,
                 data = data,
                 type = (args["type"] as? String)?.trim()?.takeIf { it.isNotEmpty() },

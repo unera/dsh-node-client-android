@@ -40,6 +40,16 @@ class GrantsTest {
     }
 
     @Test
+    fun `silent commands have a switch of their own`() {
+        assertEquals(Grants.Grant.COMMANDS, Grants.needed("intent_broadcast"))
+        assertEquals(Grants.Grant.COMMANDS, Grants.needed("intent_service"))
+        assertEquals(Grants.Grant.INTENTS, Grants.needed("intent_start"))
+        // turning launches off leaves commands alone, and the other way round
+        assertTrue(Grants.allows("intent_broadcast") { it != Grants.Grant.INTENTS })
+        assertFalse(Grants.allows("intent_broadcast") { it != Grants.Grant.COMMANDS })
+    }
+
+    @Test
     fun `a refusal names the switch and where it lives`() {
         val text = Grants.refusal(Grants.Grant.SHELL)
         assertTrue(text.contains("Команды оболочки"))

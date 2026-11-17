@@ -57,7 +57,11 @@ class DeviceApi (private val context: Context) {
             .put(method("intent_start", "Open something by intent: action, data URI, extras",
                 intentArgs(requireData = false)))
             .put(method("intent_open", "Open a URL or URI with whatever app handles it",
-                intentArgs(requireData = true))))
+                intentArgs(requireData = true)))
+            .put(method("intent_broadcast", "Send a broadcast command to one app (package required)",
+                intentArgs(requireData = false)))
+            .put(method("intent_service", "Start a service of one app (package required)",
+                intentArgs(requireData = false))))
 
     /** The argument shape every intent method shares. */
     private fun intentArgs (requireData: Boolean): JSONObject {
@@ -93,6 +97,8 @@ class DeviceApi (private val context: Context) {
             "intent_query" -> intentQuery(args)
             "intent_start" -> intentStart(args)
             "intent_open" -> intentStart(args)
+            "intent_broadcast" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.BROADCAST)
+            "intent_service" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.SERVICE)
             else -> error("unknown method $method")
         }
     } catch (error: Throwable) {
@@ -118,10 +124,25 @@ class DeviceApi (private val context: Context) {
             caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
             else -> "другая"
         }
+        // A VPN is a transport, and the system tells any app whether one is up; which app owns it
+        // is not readable, so the answer says "a tunnel is up" and how many of them there are.
+        val vpnUp = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+        val vpnCount = runCatching {
+            connectivity.allNetworks.count { candidate ->
+                connectivity.getNetworkCapabilities(candidate)
+                    ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+        }.getOrDefault(0)
+        val alwaysOn = runCatching {
+            android.provider.Settings.Secure.getString(context.contentResolver, "always_on_vpn_app")
+        }.getOrNull()?.takeIf { it.isNotBlank() && it != "null" }
         return ok(JSONObject()
             .put("battery", if (level >= 0) level * 100 / scale else -1)
             .put("charging", charging)
             .put("network", kind)
+            .put("vpn", vpnUp)
+            .put("vpnNetworks", vpnCount)
+            .put("vpnAlwaysOn", alwaysOn ?: JSONObject.NULL)
             .put("screenOn", power.isInteractive)
             .put("uptimeSeconds", android.os.SystemClock.elapsedRealtime() / 1000))
     }
@@ -244,14 +265,46 @@ class DeviceApi (private val context: Context) {
     }
 
     /**
+     * Send a command to one app: a broadcast or a service start.
+     *
+     * This is how a VPN client, a media player or a home-automation app is toggled when it has
+     * published such an interface — there is no system-wide switch a third-party app may press,
+     * and pretending otherwise would be a lie with a delay.
+     */
+    private fun intentCommand (args: JSONObject, kind: ru.uvw.dshnc.logic.IntentRequest.Kind): JSONObject {
+        val request = ru.uvw.dshnc.logic.IntentRequest.parse(plainMap(args), kind)
+        val intent = intentOf(request)
+        val target = request.packageName ?: error("нужен package")
+        val installed = runCatching { context.packageManager.getPackageInfo(target, 0) }.isSuccess
+        if (!installed) error("приложение $target не установлено")
+        if (kind == ru.uvw.dshnc.logic.IntentRequest.Kind.BROADCAST) {
+            context.sendBroadcast(intent)
+        } else {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+        return ok(JSONObject()
+            .put("sent", true)
+            .put("kind", kind.name.lowercase())
+            .put("package", target)
+            .put("action", request.action))
+    }
+
+    /**
      * Turn one request into an Intent the system understands.
      *
      * The rules live in `IntentRequest` and are covered by unit tests; this is only the bridge to
      * Android. `FLAG_ACTIVITY_NEW_TASK` is not decoration: the node is a service, and starting an
      * activity without it throws from anything but an activity context.
      */
-    private fun intentOf (args: JSONObject): Intent {
-        val request = ru.uvw.dshnc.logic.IntentRequest.parse(plainMap(args))
+    private fun intentOf (args: JSONObject): Intent =
+        intentOf(ru.uvw.dshnc.logic.IntentRequest.parse(plainMap(args)))
+
+    /** The bridge from a parsed request to Android, shared by activities, broadcasts and services. */
+    private fun intentOf (request: ru.uvw.dshnc.logic.IntentRequest): Intent {
         val intent = Intent(request.action)
         request.data?.let { intent.data = android.net.Uri.parse(it) }
         request.type?.let { intent.type = it }
