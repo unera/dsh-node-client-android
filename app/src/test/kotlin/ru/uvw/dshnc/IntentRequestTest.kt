@@ -68,6 +68,21 @@ class IntentRequestTest {
     }
 
     @Test
+    fun `an app scheme of its own is allowed when the app is named`() {
+        // "navigate to a point" in the navigator's own words needs its own scheme; without a
+        // package the same call is refused, because nobody said who should answer.
+        val refused = runCatching {
+            IntentRequest.parse(mapOf("data" to "yandexnavi://build_route_on_map?lat_to=55.7"))
+        }.exceptionOrNull()
+        assertTrue("схема без указания приложения должна быть отклонена", refused is IllegalArgumentException)
+        val pinned = IntentRequest.parse(mapOf(
+            "data" to "yandexnavi://build_route_on_map?lat_to=55.7",
+            "package" to "ru.yandex.yandexnavi",
+        ))
+        assertEquals("ru.yandex.yandexnavi", pinned.packageName)
+    }
+
+    @Test
     fun `a package pins the request to one app`() {
         val request = IntentRequest.parse(mapOf("data" to "geo:55.75,37.61", "package" to "ru.yandex.yandexmaps"))
         assertEquals("ru.yandex.yandexmaps", request.packageName)

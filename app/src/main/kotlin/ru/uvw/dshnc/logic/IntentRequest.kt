@@ -30,7 +30,14 @@ data class IntentRequest (
             "android.intent.action.MAIN",
         )
 
-        /** URI schemes allowed in `data`: the ones a phone is expected to open. */
+        /**
+         * URI schemes allowed in `data` without naming an app.
+         *
+         * A scheme nobody listed is still allowed when the caller pins a package: every app with
+         * a deep link has a scheme of its own (`yandexnavi:`, `tg:`, `spotify:`), and refusing
+         * them all would mean the feature works only for the four universal ones. Pinning the
+         * target is what keeps the generalisation honest — the caller says who should answer.
+         */
         val SCHEMES = setOf("geo", "tel", "https", "http", "mailto", "sms", "market", "magnet")
 
         /** The action a bare URL or a `verb` suffix means when nothing is said. */
@@ -56,7 +63,10 @@ data class IntentRequest (
             if (data != null) {
                 val scheme = data.substringBefore(':', "").lowercase()
                 if (scheme.isEmpty()) throw IllegalArgumentException("в data нет схемы: $data")
-                if (!SCHEMES.contains(scheme)) throw IllegalArgumentException("схема не разрешена: $scheme")
+                val pinned = (args["package"] as? String)?.trim()?.isNotEmpty() == true
+                if (!SCHEMES.contains(scheme) && !pinned) {
+                    throw IllegalArgumentException("схема не разрешена без указания приложения: $scheme")
+                }
             }
             val extras = LinkedHashMap<String, Any>()
             (args["extras"] as? Map<*, *>)?.forEach { (key, value) ->
