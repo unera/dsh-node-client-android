@@ -435,20 +435,7 @@ class SectionActivity : AppCompatActivity() {
         push(Ui.divider(this))
 
         for (grant in ru.uvw.dshnc.logic.Grants.Grant.entries) {
-            val allowed = store.grant(grant.key)
-            push(Ui.itemEx(
-                this,
-                grant.title,
-                if (allowed) "включено" else "выключено",
-                Ui.stateColor(allowed),
-                grantHint(grant),
-                {
-                    store.setGrant(grant.key, !allowed)
-                    // rebuilt from the store — one truth, no local copies — and the scroll
-                    // position rides along through onSaveInstanceState
-                    recreate()
-                },
-            ))
+            push(grantRow(grant))
             push(Ui.divider(this))
         }
 
@@ -462,6 +449,65 @@ class SectionActivity : AppCompatActivity() {
         ))
         push(Ui.divider(this))
     }
+
+
+    /**
+     * One switch: a title, a state, a sentence about what is lost, and a checkbox.
+     *
+     * The row updates itself instead of rebuilding the screen. Rebuilding kept the scroll
+     * position but repainted everything, and a screen that flashes on every tap reads as a
+     * fault rather than as an answer.
+     */
+    private fun grantRow (grant: ru.uvw.dshnc.logic.Grants.Grant): LinearLayout {
+        val density = resources.displayMetrics.density
+        var allowed = store.grant(grant.key)
+        val state = TextView(this).apply {
+            text = stateWord(allowed)
+            textSize = 15f
+            setTextColor(Ui.stateColor(allowed))
+            setPadding(0, (4 * density).toInt(), 0, 0)
+        }
+        val box = android.widget.CheckBox(this).apply {
+            isChecked = allowed
+            // the row owns the tap: a checkbox that also reacts would toggle twice
+            isClickable = false
+            isFocusable = false
+        }
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@SectionActivity).apply {
+                text = grant.title
+                textSize = 18f
+                setTextColor(android.graphics.Color.WHITE)
+            })
+            addView(state)
+            addView(TextView(this@SectionActivity).apply {
+                text = grantHint(grant)
+                textSize = 13f
+                setTextColor(android.graphics.Color.parseColor("#8b8b8b"))
+                setPadding(0, (6 * density).toInt(), 0, 0)
+            })
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding((20 * density).toInt(), (12 * density).toInt(), (20 * density).toInt(), (12 * density).toInt())
+            isClickable = true
+            addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(box)
+            setOnClickListener {
+                allowed = !allowed
+                store.setGrant(grant.key, allowed)
+                box.isChecked = allowed
+                state.text = stateWord(allowed)
+                state.setTextColor(Ui.stateColor(allowed))
+            }
+        }
+        return row
+    }
+
+    /** The word the switch shows — short, because it sits under a title. */
+    private fun stateWord (allowed: Boolean): String = if (allowed) "включено" else "выключено"
 
     /** One sentence per switch: what a person loses by turning it off. */
     private fun grantHint (grant: ru.uvw.dshnc.logic.Grants.Grant): String = when (grant) {
