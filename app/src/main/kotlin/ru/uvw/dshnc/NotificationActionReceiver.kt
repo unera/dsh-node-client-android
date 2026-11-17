@@ -45,6 +45,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     sent = true
                     break
                 } catch (error: Throwable) {
+                    val gate = ru.uvw.dshnc.logic.EventsGate.explain(error)
+                    if (gate != null) {
+                        // The owner's switch, not a network hiccup: retrying twice more would
+                        // only write the same sentence again.
+                        store.addEvent("notify-выключено", "p$press: $gate")
+                        break
+                    }
                     store.addEvent("notify-ошибка", "p$press: ${error.message ?: error.javaClass.simpleName}")
                 }
             }

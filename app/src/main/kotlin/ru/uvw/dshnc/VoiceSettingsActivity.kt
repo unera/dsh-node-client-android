@@ -6,11 +6,13 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import ru.uvw.dshnc.logic.AnswerMode
+import ru.uvw.dshnc.logic.EventsGate
 import ru.uvw.dshnc.logic.VoiceChatBus
 import ru.uvw.dshnc.logic.VoiceInbox
 import ru.uvw.dshnc.logic.VoiceMenu
 import ru.uvw.dshnc.logic.VoiceMode
 import ru.uvw.dshnc.logic.VoiceReplay
+import ru.uvw.dshnc.logic.VoiceWarmup
 import ru.uvw.dshnc.store.TokenStore
 
 /**
@@ -66,6 +68,11 @@ class VoiceSettingsActivity : AppCompatActivity() {
 
     /** A group: a heading and its choices, each with a mark when it is the current one. */
     private fun group (title: String, rows: List<Row>) {
+        // A refusal a person can act on is stated above the choices, not left to a toast that
+        // has already gone when the screen is read.
+        VoiceWarmup.lastRefusal?.let { reason ->
+            root.addView(Ui.item(this, "⚠ события выключены", reason, null))
+        }
         root.addView(Ui.group(this, title))
         for (row in rows) {
             root.addView(Ui.item(this, if (row.checked) "✓ ${row.title}" else row.title, row.subtitle) { choose(row.id) })
@@ -98,13 +105,14 @@ class VoiceSettingsActivity : AppCompatActivity() {
             return
         }
         Thread({
+            var refusal: String? = null
             val ok = runCatching {
                 ru.uvw.dshnc.api.NodeApi(base).sendEvent(token, org.json.JSONObject().put("type", "new-session"))
                 true
-            }.getOrDefault(false)
+            }.onFailure { error -> refusal = EventsGate.explain(error) }.getOrDefault(false)
             runOnUiThread {
                 if (!ok) {
-                    toast("хост не ответил")
+                    toast(refusal ?: "хост не ответил")
                     return@runOnUiThread
                 }
                 VoiceInbox.clear()

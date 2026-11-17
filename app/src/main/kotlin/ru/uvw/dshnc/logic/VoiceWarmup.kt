@@ -24,6 +24,16 @@ object VoiceWarmup {
     /** How the event is actually sent; tests replace it with a counter, nobody else does. */
     @Volatile var transport: ((base: String, token: String) -> Unit)? = null
 
+    /**
+     * Why the last wake-up was refused, when the reason is one a person can act on.
+     *
+     * A wake-up stays a courtesy: a dead network is ignored as before. But "the owner turned
+     * device events off" would otherwise look exactly like a slow host, so the sentence is
+     * kept here and the voice screen shows it. Cleared by the next wake-up that goes through.
+     */
+    @Volatile var lastRefusal: String? = null
+        private set
+
     private val lock = Object()
     private var lastSentAt = 0L
 
@@ -57,7 +67,14 @@ object VoiceWarmup {
     }
 
     private fun send (base: String, token: String) {
-        ru.uvw.dshnc.api.NodeApi(base).sendEvent(token, body())
+        try {
+            ru.uvw.dshnc.api.NodeApi(base).sendEvent(token, body())
+            lastRefusal = null
+        } catch (error: Throwable) {
+            // Only the switch is worth a sentence; everything else stays as silent as before.
+            val refusal = EventsGate.explain(error) ?: return
+            lastRefusal = refusal
+        }
     }
 
     /** When the last wake-up went out: the throttle reads it, tests check it. */
