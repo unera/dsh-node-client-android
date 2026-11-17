@@ -624,6 +624,10 @@ class VoiceChatActivity : AppCompatActivity() {
     private fun view (entry: VoiceChatLog.Entry, previousId: String?, tail: Boolean, lastAnswer: Boolean = false): View {
         val density = resources.displayMetrics.density
         val bubbleMaxWidth = VoiceBubble.maxWidthPx(resources.displayMetrics.widthPixels)
+        // A table gets the whole row, not the bubble's share of it: the columns are read across,
+        // and every pixel the bubble keeps is a pixel the reader has to scroll to. The avatar and
+        // the row padding are taken off so that nothing is pushed past the edge of the screen.
+        val tableMaxWidth = resources.displayMetrics.widthPixels - (72 * density).toInt()
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = when (VoiceBubble.alignment(entry.role)) {
@@ -723,7 +727,7 @@ class VoiceChatActivity : AppCompatActivity() {
                     // to the viewport and squeezing again is exactly what must not happen
                     isFillViewport = false
                     layoutParams = LinearLayout.LayoutParams(
-                        bubbleMaxWidth,
+                        tableMaxWidth,
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                     )
                     addView(view)
