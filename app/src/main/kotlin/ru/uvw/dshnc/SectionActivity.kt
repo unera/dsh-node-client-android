@@ -17,6 +17,17 @@ import ru.uvw.dshnc.store.TokenStore
  * The screen of a single menu section: a title with "back" and the rows of that section.
  */
 class SectionActivity : AppCompatActivity() {
+    /** The schemes the node may open, each with a sample link used to ask Android who handles it. */
+    private companion object {
+        val INTENT_SAMPLES = listOf(
+            "geo" to "geo:0,0?q=Москва",
+            "tel" to "tel:+70000000000",
+            "https" to "https://example.com",
+            "mailto" to "mailto:a@b.c",
+            "sms" to "sms:+70000000000",
+        )
+    }
+
     /** The first entry must not rebuild the screen: otherwise a flicker on opening. */
     private var built = false
 
@@ -63,6 +74,7 @@ class SectionActivity : AppCompatActivity() {
             "roots" -> getString(R.string.menu_roots)
             "apps" -> getString(R.string.menu_apps)
             "overlay" -> getString(R.string.menu_overlay)
+            "intents" -> "Запуск приложений"
             else -> getString(R.string.menu_net)
         }
         // the same screen and the same style as the menu: the third level must not
@@ -80,6 +92,7 @@ class SectionActivity : AppCompatActivity() {
             "android" -> { buildAndroid(pad); buildDebug(pad) }
             "roots" -> buildRoots()
             "apps" -> buildApps(pad)
+            "intents" -> buildIntents(pad)
             else -> buildNet(pad)
         }
         setContentView(android.widget.ScrollView(this).apply { addView(root) })
@@ -245,6 +258,16 @@ class SectionActivity : AppCompatActivity() {
             { openOverlaySettings() },
         ))
         push(Ui.divider(this))
+        val launch = android.provider.Settings.canDrawOverlays(this)
+        push(Ui.itemEx(
+            this,
+            "Запуск приложений",
+            if (launch) "готово · ${schemeCount()}" else "нужен доступ «поверх других приложений»",
+            Ui.stateColor(launch),
+            "Открывать чужие экраны по ссылке: навигатор до адреса, почта, браузер. Android гасит запуск из фона без доступа «поверх других приложений»",
+            { open("intents") },
+        ))
+        push(Ui.divider(this))
         // the one thing about pop-ups that used to sit on the main screen: it is a
         // permission, so it belongs next to the others. The tap is always live: from the
         // system screen it can be granted AND revoked, and a row that leads only one way
@@ -367,6 +390,53 @@ class SectionActivity : AppCompatActivity() {
         debug.setOnCheckedChangeListener { _, checked -> store.debugInfo = checked }
         root.addView(Ui.divider(this))
         root.addView(debug)
+    }
+
+
+    /**
+     * What the phone can be asked to open.
+     *
+     * The list is not written here: it is what Android answers when asked who handles `geo:`,
+     * `tel:` and the rest. The same query is what `android.intent_query` returns over the node
+     * API, so the screen and the model see one truth.
+     */
+    private fun buildIntents (pad: Int) {
+        val overlay = android.provider.Settings.canDrawOverlays(this)
+        push(Ui.itemEx(
+            this,
+            "Запуск из фона",
+            stateLine(overlay),
+            Ui.stateColor(overlay),
+            "Без этого доступа Android молча не откроет чужое приложение: ни навигатор, ни почту",
+            { openOverlaySettings() },
+        ))
+        push(Ui.divider(this))
+        for ((scheme, sample) in INTENT_SAMPLES) {
+            val names = resolvers(sample)
+            push(Ui.itemEx(
+                this,
+                "$scheme:",
+                if (names.isEmpty()) "некому открыть" else names.take(3).joinToString(", "),
+                Ui.stateColor(names.isNotEmpty()),
+                if (names.size > 3) "ещё ${names.size - 3} — полный список спросите у узла" else "кто ответит на такую ссылку",
+                null,
+            ))
+            push(Ui.divider(this))
+        }
+    }
+
+    /** The apps that would answer this link, by the label a person knows them by. */
+    private fun resolvers (sample: String): List<String> {
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(sample))
+        return packageManager.queryIntentActivities(intent, 0)
+            .map { it.loadLabel(packageManager).toString() }
+            .distinct()
+    }
+
+    /** One line for the section: how many schemes have somebody to open them. */
+    private fun schemeCount (): String {
+        val ready = INTENT_SAMPLES.count { resolvers(it.second).isNotEmpty() }
+        return "$ready из ${INTENT_SAMPLES.size}"
     }
 
     private fun buildApps (pad: Int) {

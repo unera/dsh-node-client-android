@@ -51,7 +51,27 @@ class DeviceApi (private val context: Context) {
             .put(method("apps", "Installed apps that can be launched (package and label)",
                 JSONObject().put("type", "object").put("properties", JSONObject())))
             .put(method("alarm_dismiss", "Ask the system clock to dismiss the next alarm",
-                JSONObject().put("type", "object").put("properties", JSONObject()))))
+                JSONObject().put("type", "object").put("properties", JSONObject())))
+            .put(method("intent_query", "Which apps would open this intent (package, label)",
+                intentArgs(requireData = false)))
+            .put(method("intent_start", "Open something by intent: action, data URI, extras",
+                intentArgs(requireData = false)))
+            .put(method("intent_open", "Open a URL or URI with whatever app handles it",
+                intentArgs(requireData = true))))
+
+    /** The argument shape every intent method shares. */
+    private fun intentArgs (requireData: Boolean): JSONObject {
+        val properties = JSONObject()
+            .put("action", JSONObject().put("type", "string"))
+            .put("data", JSONObject().put("type", "string"))
+            .put("type", JSONObject().put("type", "string"))
+            .put("package", JSONObject().put("type", "string"))
+            .put("class", JSONObject().put("type", "string"))
+            .put("extras", JSONObject().put("type", "object"))
+        val schema = JSONObject().put("type", "object").put("properties", properties)
+        if (requireData) schema.put("required", JSONArray().put("data"))
+        return schema
+    }
 
     private fun method (name: String, description: String, args: JSONObject): JSONObject = JSONObject()
         .put("method", name)
@@ -70,6 +90,9 @@ class DeviceApi (private val context: Context) {
             "alarm_next" -> alarmNext()
             "alarm_set" -> alarmSet(args)
             "alarm_dismiss" -> alarmDismiss()
+            "intent_query" -> intentQuery(args)
+            "intent_start" -> intentStart(args)
+            "intent_open" -> intentStart(args)
             else -> error("unknown method $method")
         }
     } catch (error: Throwable) {
@@ -218,6 +241,100 @@ class DeviceApi (private val context: Context) {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         return ok(JSONObject().put("requested", true))
+    }
+
+    /**
+     * Turn one request into an Intent the system understands.
+     *
+     * The rules live in `IntentRequest` and are covered by unit tests; this is only the bridge to
+     * Android. `FLAG_ACTIVITY_NEW_TASK` is not decoration: the node is a service, and starting an
+     * activity without it throws from anything but an activity context.
+     */
+    private fun intentOf (args: JSONObject): Intent {
+        val request = ru.uvw.dshnc.logic.IntentRequest.parse(plainMap(args))
+        val intent = Intent(request.action)
+        request.data?.let { intent.data = android.net.Uri.parse(it) }
+        request.type?.let { intent.type = it }
+        request.packageName?.let { intent.setPackage(it) }
+        request.className?.let { intent.setClassName(request.packageName ?: context.packageName, it) }
+        for ((key, value) in request.extras) {
+            when (value) {
+                is String -> intent.putExtra(key, value)
+                is Boolean -> intent.putExtra(key, value)
+                is Int -> intent.putExtra(key, value)
+                is Long -> intent.putExtra(key, value)
+                is Double -> intent.putExtra(key, value)
+            }
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return intent
+    }
+
+    /** The JSON arguments as the plain map the request parser takes. */
+    private fun plainMap (args: JSONObject): Map<String, Any?> {
+        val out = LinkedHashMap<String, Any?>()
+        for (key in args.keys()) {
+            when (val value = args.opt(key)) {
+                is JSONObject -> {
+                    val nested = LinkedHashMap<String, Any?>()
+                    for (inner in value.keys()) nested[inner] = value.opt(inner)
+                    out[key] = nested
+                }
+                JSONObject.NULL -> out[key] = null
+                else -> out[key] = value
+            }
+        }
+        return out
+    }
+
+    /** Who would open this: the answer the person needs before a launch surprises them. */
+    private fun intentQuery (args: JSONObject): JSONObject {
+        val intent = intentOf(args)
+        val manager = context.packageManager
+        val found = org.json.JSONArray()
+        for (info in manager.queryIntentActivities(intent, 0)) {
+            found.put(JSONObject()
+                .put("package", info.activityInfo.packageName)
+                .put("activity", info.activityInfo.name)
+                .put("label", info.loadLabel(manager).toString()))
+        }
+        val chosen = intent.resolveActivity(manager)
+        return ok(JSONObject()
+            .put("count", found.length())
+            .put("apps", found)
+            .put("default", chosen?.let { "${it.packageName}/${it.className}" } ?: JSONObject.NULL))
+    }
+
+    /**
+     * Start it.
+     *
+     * The system decides what answers, and it decides silently: from the background an activity
+     * start needs the "display over other apps" access, exactly like the alarm clock, so the
+     * refusal is checked here and said in words instead of turning into an app that never opens.
+     */
+    private fun intentStart (args: JSONObject): JSONObject {
+        val intent = intentOf(args)
+        val manager = context.packageManager
+        val chosen = manager.resolveActivity(intent, 0)
+        if (chosen == null) {
+            // an explicit package that is installed but declares nothing is a different story
+            val packageName = intent.`package`
+            val installed = packageName != null &&
+                runCatching { manager.getPackageInfo(packageName, 0) }.isSuccess
+            if (!installed) error("некому открыть: подходящего приложения нет")
+        }
+        if (!android.provider.Settings.canDrawOverlays(context)) {
+            error("нужен доступ «поверх других приложений»: без него Android гасит запуск из фона")
+        }
+        context.startActivity(intent)
+        val label = chosen?.let {
+            runCatching { it.loadLabel(manager).toString() }.getOrDefault(it.activityInfo.packageName)
+        } ?: ""
+        return ok(JSONObject()
+            .put("started", true)
+            .put("package", chosen?.activityInfo?.packageName ?: intent.`package` ?: JSONObject.NULL)
+            .put("activity", chosen?.activityInfo?.name ?: JSONObject.NULL)
+            .put("label", label))
     }
 
     private fun ok (payload: JSONObject) = JSONObject().put("status", "ok").put("payload", payload)
