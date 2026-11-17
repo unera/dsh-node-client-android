@@ -200,11 +200,7 @@ class VoiceChatActivity : AppCompatActivity() {
                 setMargins(0, (4 * density).toInt(), pad, (4 * density).toInt())
             }
             visibility = View.GONE
-            setOnClickListener {
-                scrolledAway = false
-                downButton.visibility = View.GONE
-                autoScroll()
-            }
+            setOnClickListener { scrollToBottom() }
         }
         root.addView(downButton)
 
@@ -494,9 +490,13 @@ class VoiceChatActivity : AppCompatActivity() {
             renderChat()
             return
         }
+        // A redraw is not a reason to move the view. A message is: the reader has to see it to
+        // the last pixel. The progress line is neither — it changes several times a turn.
+        var arrived = false
         for (item in items) {
             when (item) {
                 is VoiceInbox.Item.Chat -> {
+                    arrived = true
                     val parts = if (item.role == VoiceChat.Role.ASSISTANT) {
                         VoiceAnswer.compose(item.text, item.speak, AnswerMode.of(store.answerMode))
                     } else {
@@ -522,21 +522,20 @@ class VoiceChatActivity : AppCompatActivity() {
                 }
             }
         }
-        renderChat()
+        renderChat(arrived)
     }
 
     /**
-     * Follow the conversation, unless the person is reading history.
+     * Go to the newest line.
      *
-     * A new line has to be visible to the last pixel — «добавилось, но не видно» is the same as
-     * "nothing happened" — but yanking the view while somebody scrolls back is worse than a missed
-     * message, so the position is kept and a small «down» tab appears instead.
+     * This is the only automatic scroll in the screen, and it happens for one reason: a message
+     * arrived. Everything else — a redraw, the progress line ("17. bash"), coming back from
+     * another activity — leaves the view where the reader put it. Redrawing is not a reason to
+     * move: the progress line changes several times a turn, and each change used to drag the
+     * conversation to the bottom under the person's finger.
      */
-    private fun autoScroll () {
-        if (scrolledAway) {
-            downButton.visibility = View.VISIBLE
-            return
-        }
+    private fun scrollToBottom () {
+        scrolledAway = false
         downButton.visibility = View.GONE
         scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
@@ -571,7 +570,7 @@ class VoiceChatActivity : AppCompatActivity() {
      * transcript replacing its placeholder, an answer arriving before the screen was opened, and a
      * rotate in the middle of an exchange all end up in the same code path.
      */
-    private fun renderChat () {
+    private fun renderChat (follow: Boolean = false) {
         chat.removeAllViews()
         var previousId: String? = null
         val entries = VoiceChatBus.snapshot()
@@ -586,7 +585,7 @@ class VoiceChatActivity : AppCompatActivity() {
             chat.addView(progressLine)
         }
         refreshTitle()
-        autoScroll()
+        if (follow) scrollToBottom()
     }
 
     /**
@@ -1006,10 +1005,7 @@ class VoiceChatActivity : AppCompatActivity() {
         // the host's synthesizer sleeps after ten minutes of silence and takes seconds to wake:
         // one knock on entering the screen saves the first sentence those seconds
         VoiceWarmup.fire(store.base, store.token, store.voiceSynth)
-        scrolledAway = false
-        downButton.visibility = View.GONE
         drainInbox()
-        autoScroll()
     }
 
     override fun onDestroy () {
