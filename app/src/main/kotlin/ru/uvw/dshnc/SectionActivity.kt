@@ -17,6 +17,9 @@ import ru.uvw.dshnc.store.TokenStore
  * The screen of a single menu section: a title with "back" and the rows of that section.
  */
 class SectionActivity : AppCompatActivity() {
+    /** How many permission rows the section counts; the summary line says "N из этого". */
+    private val permissionRows = 5
+
     /** The schemes the node may open, each with a sample link used to ask Android who handles it. */
     private companion object {
         val INTENT_SAMPLES = listOf(
@@ -75,6 +78,7 @@ class SectionActivity : AppCompatActivity() {
             "apps" -> getString(R.string.menu_apps)
             "overlay" -> getString(R.string.menu_overlay)
             "intents" -> "Запуск приложений"
+            "perm" -> "Разрешения"
             else -> getString(R.string.menu_net)
         }
         // the same screen and the same style as the menu: the third level must not
@@ -93,6 +97,7 @@ class SectionActivity : AppCompatActivity() {
             "roots" -> buildRoots()
             "apps" -> buildApps(pad)
             "intents" -> buildIntents(pad)
+            "perm" -> buildPermissions(pad)
             else -> buildNet(pad)
         }
         setContentView(android.widget.ScrollView(this).apply { addView(root) })
@@ -240,47 +245,15 @@ class SectionActivity : AppCompatActivity() {
             { open("roots") },
         ))
         push(Ui.divider(this))
+        // the permissions moved to a screen of their own: a person looking for "what may this
+        // node do" should not read about directories and app lists on the way
         push(Ui.itemEx(
             this,
-            getString(R.string.menu_camera),
-            stateLine(checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED),
-            Ui.stateColor(checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED),
-            getString(R.string.help_camera),
-            { askCamera() },
-        ))
-        push(Ui.divider(this))
-        push(Ui.itemEx(
-            this,
-            getString(R.string.menu_overlay),
-            stateLine(android.provider.Settings.canDrawOverlays(this)),
-            Ui.stateColor(android.provider.Settings.canDrawOverlays(this)),
-            getString(R.string.help_overlay),
-            { openOverlaySettings() },
-        ))
-        push(Ui.divider(this))
-        val launch = android.provider.Settings.canDrawOverlays(this)
-        push(Ui.itemEx(
-            this,
-            "Запуск приложений",
-            if (launch) "готово · ${schemeCount()}" else "нужен доступ «поверх других приложений»",
-            Ui.stateColor(launch),
-            "Открывать чужие экраны по ссылке: навигатор до адреса, почта, браузер. Android гасит запуск из фона без доступа «поверх других приложений»",
-            { open("intents") },
-        ))
-        push(Ui.divider(this))
-        // the one thing about pop-ups that used to sit on the main screen: it is a
-        // permission, so it belongs next to the others. The tap is always live: from the
-        // system screen it can be granted AND revoked, and a row that leads only one way
-        // locks the person out of their own decision
-        val popup = PopupPermission.allowed(this)
-        val popupTap: (() -> Unit)? = ({ PopupPermission.open(this) })
-        push(Ui.itemEx(
-            this,
-            getString(R.string.menu_popup),
-            getString(if (popup) R.string.popup_allowed else R.string.popup_denied),
-            Ui.stateColor(popup),
-            getString(R.string.help_popup),
-            popupTap,
+            "Разрешения",
+            "${permissionsReady()} из $permissionRows",
+            Ui.stateColor(permissionsReady() == permissionRows),
+            "Камера, фон, будильники, запуск приложений — что узел уже может и чего ему не хватает",
+            { open("perm") },
         ))
     }
 
@@ -400,6 +373,87 @@ class SectionActivity : AppCompatActivity() {
      * `tel:` and the rest. The same query is what `android.intent_query` returns over the node
      * API, so the screen and the model see one truth.
      */
+
+    /**
+     * What the node is allowed to do, one row per permission.
+     *
+     * A row that leads to the system screen is always live: a permission can be granted AND
+     * revoked there, and a one-way row would lock the person out of their own decision.
+     */
+    private fun buildPermissions (pad: Int) {
+        val camera = checkSelfPermission(android.Manifest.permission.CAMERA) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        push(permissionRow(getString(R.string.menu_camera), camera, getString(R.string.help_camera)) { askCamera() })
+
+        val overlay = android.provider.Settings.canDrawOverlays(this)
+        push(permissionRow(getString(R.string.menu_overlay), overlay, getString(R.string.help_overlay)) { openOverlaySettings() })
+
+        push(permissionRow(
+            "Точные будильники", exactAlarms(),
+            "Без этого система сдвигает будильник: «через полчаса» станет «когда удобно»",
+        ) { openExactAlarmSettings() })
+
+        push(permissionRow(
+            "Батарея без ограничений", batteryFree(),
+            "Иначе Android душит фоновую работу и узел пропадает со связи на час-другой",
+        ) { askBattery() })
+
+        val popup = PopupPermission.allowed(this)
+        push(permissionRow(
+            getString(R.string.menu_popup), popup,
+            getString(if (popup) R.string.popup_allowed else R.string.popup_denied),
+        ) { PopupPermission.open(this) })
+
+        push(Ui.divider(this))
+        push(Ui.itemEx(
+            this, "Запуск приложений", schemeCount(), Ui.stateColor(true),
+            "Кто на этом телефоне откроет ссылку: навигатор, почта, браузер",
+            { open("intents") },
+        ))
+    }
+
+    /** One permission line: a title, a state, and a sentence about what happens without it. */
+    private fun permissionRow (title: String, granted: Boolean, help: String, tap: () -> Unit): android.view.View =
+        Ui.itemEx(this, title, stateLine(granted), Ui.stateColor(granted), help, tap)
+
+    /** Android 12 and later may refuse an exact alarm; before that the question does not exist. */
+    private fun exactAlarms (): Boolean = runCatching {
+        android.os.Build.VERSION.SDK_INT < 31 ||
+            getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() == true
+    }.getOrDefault(false)
+
+    /** Whether the system is told to leave this app alone in the background. */
+    private fun batteryFree (): Boolean = runCatching {
+        getSystemService(android.os.PowerManager::class.java)?.isIgnoringBatteryOptimizations(packageName) == true
+    }.getOrDefault(false)
+
+    /** How many of the permissions are already granted — the number the section shows. */
+    private fun permissionsReady (): Int {
+        var ready = 0
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) ready += 1
+        if (android.provider.Settings.canDrawOverlays(this)) ready += 1
+        if (exactAlarms()) ready += 1
+        if (batteryFree()) ready += 1
+        if (PopupPermission.allowed(this)) ready += 1
+        return ready
+    }
+
+    private fun openExactAlarmSettings () {
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName")))
+        } catch (error: Throwable) {
+            runCatching { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+        }
+    }
+
+    private fun askBattery () {
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (error: Throwable) {
+            runCatching { startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        }
+    }
+
     private fun buildIntents (pad: Int) {
         val overlay = android.provider.Settings.canDrawOverlays(this)
         push(Ui.itemEx(
