@@ -1029,16 +1029,25 @@ class VoiceScrollTest {
     }
 
     @Test
-    fun `a new line is scrolled into view to its very bottom`() {
+    fun `a message scrolls the conversation to the very bottom`() {
         val screen = screen()
         ru.uvw.dshnc.logic.VoiceChatBus.clear()
         try {
             fill(screen, 30)
             val scroller = field(screen, "scroller") as android.widget.ScrollView
             val chat = field(screen, "chat") as android.widget.LinearLayout
+            // drawing alone does not move the view
+            assertEquals("перерисовка не двигает ленту", 0, scroller.scrollY)
+
+            ru.uvw.dshnc.logic.VoiceInbox.post(
+                ru.uvw.dshnc.logic.VoiceInbox.Item.Chat("s-new", ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT, "новый ответ"),
+            )
+            val drain = VoiceChatActivity::class.java.getDeclaredMethod("drainInbox").apply { isAccessible = true }
+            drain.invoke(screen)
+            layout(screen)
             val max = (chat.height - scroller.height).coerceAtLeast(0)
             assertTrue("лента должна быть прокручиваемой", max > 0)
-            assertEquals("должен быть виден самый низ ленты", max, scroller.scrollY)
+            assertEquals("пришло сообщение — виден самый низ ленты", max, scroller.scrollY)
         } finally {
             ru.uvw.dshnc.logic.VoiceChatBus.clear()
             screen.finish()
@@ -1046,36 +1055,22 @@ class VoiceScrollTest {
     }
 
     @Test
-    fun `a reader far up is not dragged away, and gets the down tab`() {
+    fun `a cadence does not move the view`() {
         val screen = screen()
         ru.uvw.dshnc.logic.VoiceChatBus.clear()
         try {
             fill(screen, 40)
             val scroller = field(screen, "scroller") as android.widget.ScrollView
-            val down = field(screen, "downButton") as android.widget.TextView
-            // the person scrolls back to the very top: a screen and more from the end
             scroller.scrollTo(0, 0)
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
-            assertEquals("кнопка «вниз» должна быть видна", android.view.View.VISIBLE, down.visibility)
 
-            // a new line arrives: no autoscroll, the position is kept
-            ru.uvw.dshnc.logic.VoiceChatBus.putQuiet(
-                "s-new",
-                ru.uvw.dshnc.logic.VoiceChat.Role.ASSISTANT,
-                "новый ответ, который не должен дёргать читателя",
-            )
-            val render = VoiceChatActivity::class.java.getDeclaredMethod("renderChat").apply { isAccessible = true }
-            render.invoke(screen)
+            // The step of the work arrives: the progress line changes, the view stays where the
+            // reader put it. This is what used to jump under the finger several times a turn.
+            ru.uvw.dshnc.logic.VoiceInbox.post(ru.uvw.dshnc.logic.VoiceInbox.Item.Activity("x-1", 1, "bash"))
+            val drain = VoiceChatActivity::class.java.getDeclaredMethod("drainInbox").apply { isAccessible = true }
+            drain.invoke(screen)
             layout(screen)
-            assertEquals(0, scroller.scrollY)
-            assertEquals(android.view.View.VISIBLE, down.visibility)
-
-            // the tab brings the reader to the end and disappears
-            down.performClick()
-            layout(screen)
-            val chat = field(screen, "chat") as android.widget.LinearLayout
-            assertEquals((chat.height - scroller.height).coerceAtLeast(0), scroller.scrollY)
-            assertEquals(android.view.View.GONE, down.visibility)
+            assertEquals("кадэнс не двигает ленту", 0, scroller.scrollY)
         } finally {
             ru.uvw.dshnc.logic.VoiceChatBus.clear()
             screen.finish()

@@ -404,12 +404,16 @@ class VoiceChatActivity : AppCompatActivity() {
      * moves into a directory the host may read and waits for the older `record` route.
      */
     private fun sendTake (take: Recorder.Result, startedAt: Long, stoppedAt: Long, id: String) {
+        // A new take starts a new exchange: whatever id the previous one had is history, and any
+        // straggler that turns up under it is dropped instead of drawn (see drainInbox).
         val base = store.base
         val token = store.token
         if (base == null || token == null) {
             refuse(take, "узел не подключён к хосту", null, id)
             return
         }
+        exchangeId = id
+        progressLine.visibility = View.GONE
         Thread({
             // the three marks travel with the take so the host can measure the whole path: a
             // delay a person notices spans from the button to the answer, not just the upload
@@ -515,14 +519,21 @@ class VoiceChatActivity : AppCompatActivity() {
                     }
                 }
                 is VoiceInbox.Item.Activity -> {
-                    VoiceChatBus.countStep(item.id)
-                    progressExchange = item.id.ifEmpty { progressExchange }
-                    progressLine.text = "${item.n}. ${item.name.ifEmpty { "…" }}"
-                    progressLine.visibility = View.VISIBLE
+                    // A step belongs to one exchange. Once the screen follows a newer one, a step
+                    // of the old exchange is stale: drawing it would move the progress line under
+                    // a conversation it does not describe.
+                    if (item.id.isNotEmpty() && exchangeId.isEmpty()) exchangeId = item.id
+                    val stale = item.id.isNotEmpty() && exchangeId.isNotEmpty() && item.id != exchangeId
+                    if (!stale) {
+                        VoiceChatBus.countStep(item.id)
+                        progressExchange = item.id.ifEmpty { progressExchange }
+                        progressLine.text = "${item.n}. ${item.name.ifEmpty { "…" }}"
+                        progressLine.visibility = View.VISIBLE
+                    }
                 }
             }
         }
-        renderChat(arrived)
+        renderChatFollowing(arrived)
     }
 
     /**
@@ -570,7 +581,25 @@ class VoiceChatActivity : AppCompatActivity() {
      * transcript replacing its placeholder, an answer arriving before the screen was opened, and a
      * rotate in the middle of an exchange all end up in the same code path.
      */
-    private fun renderChat (follow: Boolean = false) {
+    /**
+     * The exchange this screen is following, or empty before the first line of one.
+     *
+     * The host may send the step of a job it has already abandoned — a cadence is addressed to an
+     * exchange, and an angle that arrives after the next take has nothing to do with what the
+     * person is doing now. The screen remembers, compares, and drops what is stale; that is all
+     * "the GUI keeps its own state" means here.
+     */
+    private var exchangeId: String = ""
+
+    /** Redraw everything; the view does not move. */
+    private fun renderChat () = renderChatFollowing(false)
+
+    /**
+     * Redraw everything, and follow the newest line when a message arrived.
+     *
+     * @param follow - scroll to the bottom; true only for a new message.
+     */
+    private fun renderChatFollowing (follow: Boolean) {
         chat.removeAllViews()
         var previousId: String? = null
         val entries = VoiceChatBus.snapshot()
