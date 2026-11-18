@@ -28,7 +28,7 @@ class DeviceApi (private val context: Context) {
             "alarm_next", "alarm_set", "alarm_dismiss", "device_status", "device_info",
             "device_health", "camera_snap", "photos_latest", "apps",
             "intent_query", "intent_start", "intent_open", "intent_broadcast", "intent_service",
-            "intent_edit", "components", "vpn", "vpn_bind",
+            "intent_edit", "components", "vpn", "vpn_bind", "apk_install",
         )
 
         /** @returns true when the method is one of ours — the dispatcher's only question. */
@@ -106,6 +106,11 @@ class DeviceApi (private val context: Context) {
                         .put("guid", JSONObject().put("type", "string"))
                         .put("profile", JSONObject().put("type", "string")))
                     .put("required", JSONArray().put("type").put("guid"))))
+            .put(method("apk_install", "Offer an APK to the system installer (the person confirms in its dialog)",
+                JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject().put("path", JSONObject().put("type", "string")))
+                    .put("required", JSONArray().put("path"))))
             .put(method("components", "What an app exposes: exported activities, services and receivers with their intents",
                 JSONObject()
                     .put("type", "object")
@@ -149,6 +154,7 @@ class DeviceApi (private val context: Context) {
             "intent_broadcast" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.BROADCAST)
             "intent_service" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.SERVICE)
             "components" -> components(args)
+            "apk_install" -> apkInstall(args)
             "vpn" -> vpnSwitch(args)
             "vpn_bind" -> vpnBind(args)
             "intent_edit" -> intentEdit(args)
@@ -425,6 +431,39 @@ class DeviceApi (private val context: Context) {
             .put("bound", true)
             .put("type", client.type)
             .put("profile", store.vpnProfile(client.type)))
+    }
+
+    /**
+     * Offer an APK to the system installer.
+     *
+     * Android never installs an app silently for a third-party app: the system shows its own
+     * dialog and a person presses "install". What this does is put the file in front of that
+     * dialog — a `content://` URI, because `file://` has been refused since Android 7.
+     *
+     * Two things must be true on the phone and both belong to the person: the node must hold
+     * "install unknown apps", and the file must sit in the folder the provider exposes.
+     */
+    private fun apkInstall (args: JSONObject): JSONObject {
+        val path = args.optString("path").trim()
+        if (path.isEmpty()) error("нужен path к файлу .apk")
+        val file = java.io.File(path)
+        if (!file.exists()) error("файл не найден: $path")
+        if (!file.name.endsWith(".apk", ignoreCase = true)) error("это не .apk: ${file.name}")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            error("нет разрешения «Установка неизвестных приложений»: включите его для приложения dshnc в настройках Android")
+        }
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val install = android.content.Intent(android.content.Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(install)
+        return ok(JSONObject()
+            .put("opened", true)
+            .put("file", file.name)
+            .put("size", file.length()))
     }
 
     private fun components (args: JSONObject): JSONObject {

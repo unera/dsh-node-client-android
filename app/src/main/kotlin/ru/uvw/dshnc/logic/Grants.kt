@@ -18,6 +18,7 @@ object Grants {
         ALARMS("alarms", "Будильники"),
         INTENTS("intents", "Запуск приложений"),
         COMMANDS("commands", "Команды приложениям"),
+        INSTALL("install", "Установка приложений"),
         FILES("files", "Доступ к файлам"),
         DEBUG("debug", "Отладочные сведения"),
         VOICE("voice", "Голос"),
@@ -45,6 +46,8 @@ object Grants {
         // Opening a screen and sending a command to an app are different promises: the first is
         // visible, the second happens silently, so it gets its own switch.
         method == "intent_broadcast" || method == "intent_service" -> Grant.COMMANDS
+        // Installing is its own promise: the dialog is the person's, but the file is ours.
+        method == "apk_install" -> Grant.INSTALL
         method.startsWith("intent_") -> Grant.INTENTS
         method == "camera_snap" || method == "photos_latest" -> Grant.CAMERA
         method == "read" || method == "write" || method == "edit" || method == "mkdir" ||

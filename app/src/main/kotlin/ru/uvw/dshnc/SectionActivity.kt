@@ -528,6 +528,7 @@ class SectionActivity : AppCompatActivity() {
         ru.uvw.dshnc.logic.Grants.Grant.ALARMS -> "Выключено — управление будильниками отвечает ошибкой"
         ru.uvw.dshnc.logic.Grants.Grant.INTENTS -> "Выключено — открыть навигатор или браузер по ссылке нельзя"
         ru.uvw.dshnc.logic.Grants.Grant.COMMANDS -> "Выключено — молчаливые команды приложениям не отправляются: так переключают плеер, умный дом"
+        ru.uvw.dshnc.logic.Grants.Grant.INSTALL -> "Выключено — узел не может предложить APK установщику; ставить можно только руками"
         ru.uvw.dshnc.logic.Grants.Grant.FILES -> "Выключено — файлы и каталоги недоступны, остаётся только оболочка"
         ru.uvw.dshnc.logic.Grants.Grant.DEBUG -> "Выключено — список приложений и отладочные сведения не отдаются"
         ru.uvw.dshnc.logic.Grants.Grant.VOICE -> "Выключено — голосовой чат и синтез не работают"

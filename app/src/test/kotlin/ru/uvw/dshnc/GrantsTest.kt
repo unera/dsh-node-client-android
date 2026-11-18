@@ -56,6 +56,15 @@ class GrantsTest {
     }
 
     @Test
+    fun `installing is its own promise`() {
+        // The dialog is the person's, but the file is ours: one switch, and it is not the same
+        // one that opens screens.
+        assertEquals(Grants.Grant.INSTALL, Grants.needed("apk_install"))
+        assertTrue(Grants.allows("apk_install") { it == Grants.Grant.INSTALL })
+        assertFalse(Grants.allows("apk_install") { it != Grants.Grant.INSTALL })
+    }
+
+    @Test
     fun `a known vpn client is named, never described by a caller`() {
         // The list is the allow list: a caller names "v2raytun", and the node knows the package
         // and the receiver. "Some package, some action" is a broadcast primitive, not a VPN.

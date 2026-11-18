@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    What the node may hand to another app as a content:// URI.
+
+    Deliberately small: only the folder where APKs are dropped. A FileProvider that exposes the
+    whole card would turn every share into "here is my storage".
+-->
+<paths>
+    <external-path name="dsh" path="DSH/" />
+</paths>
