@@ -43,7 +43,10 @@ class PluginCaptureActivity : AppCompatActivity() {
             // No NEW_TASK here: an activity started as a new task never returns a result, and the
             // plugin's answer is the only thing this whole screen exists for.
         }
-        runCatching { startActivityForResult(edit, REQUEST) }.onFailure { write(null, it.message ?: "не удалось открыть") }
+        runCatching { startActivityForResult(edit, REQUEST) }.onFailure {
+            write(null, it.message ?: "не удалось открыть")
+            finish()
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -87,7 +90,9 @@ class PluginCaptureActivity : AppCompatActivity() {
         val pkg = intent.getStringExtra("targetPackage")
         val client = ru.uvw.dshnc.logic.VpnClient.KNOWN.firstOrNull { it.packageName == pkg }
         if (!guid.isNullOrBlank() && client != null) {
-            TokenStore(this).bindVpn(client.type, guid, blurbOf(payload))
+            val store = TokenStore(this)
+            // The same switch `vpn_bind` needs: a capture is a VPN action, not a way around it.
+            if (store.grant(client.grantKey())) store.bindVpn(client.type, guid, blurbOf(payload))
         }
     }
 

@@ -40,26 +40,4 @@ object BundleJson {
         }
         return out
     }
-
-    /**
-     * The same shape back into a Bundle, for repeating a captured call.
-     *
-     * @param json - a value produced by {@link of}.
-     * @returns a Bundle with the same keys; unknown kinds are skipped.
-     */
-    fun toBundle (json: JSONObject): Bundle {
-        val bundle = Bundle()
-        for (key in json.keys()) {
-            when (val value = json.opt(key)) {
-                is JSONObject -> if (!value.has("unsupported")) bundle.putBundle(key, toBundle(value))
-                is JSONArray -> bundle.putStringArray(key, Array(value.length()) { value.optString(it) })
-                is Boolean -> bundle.putBoolean(key, value)
-                is Int -> bundle.putInt(key, value)
-                is Long -> bundle.putLong(key, value)
-                is Double -> bundle.putDouble(key, value)
-                is String -> bundle.putString(key, value)
-            }
-        }
-        return bundle
-    }
 }

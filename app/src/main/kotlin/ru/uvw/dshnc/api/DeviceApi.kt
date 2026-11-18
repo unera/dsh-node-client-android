@@ -152,7 +152,10 @@ class DeviceApi (private val context: Context) {
             "vpn" -> vpnSwitch(args)
             "vpn_bind" -> vpnBind(args)
             "intent_edit" -> intentEdit(args)
-            else -> error("unknown method $method")
+            // A machine-readable code, because the caller decides what to do with it: a method
+            // that does not exist is a bug in the caller, not a failure of the phone.
+            else -> JSONObject().put("status", "error").put("code", "unknown_method")
+                .put("message", "нет такого метода: $method")
         }
     } catch (error: Throwable) {
         JSONObject().put("status", "error").put("message", error.message ?: error.javaClass.simpleName)
@@ -335,10 +338,23 @@ class DeviceApi (private val context: Context) {
         val target = args.optString("package").trim()
         val component = args.optString("class").trim()
         if (target.isEmpty() || component.isEmpty()) error("нужны package и class")
-        val path = args.optString("file").trim().ifEmpty {
-            val root = ru.uvw.dshnc.store.TokenStore(context).roots.firstOrNull() ?: context.filesDir.absolutePath
-            java.io.File(root, "plugin-capture.json").absolutePath
+        // Only a known client's own editor: without this the method launches any exported
+        // activity of any app, which is a launch nobody asked for and the whitelist never sees.
+        val client = ru.uvw.dshnc.logic.VpnClient.KNOWN.firstOrNull { it.packageName == target }
+            ?: error("$target не из известных VPN-клиентов: редактор открывается только у них")
+        val exported = runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getActivityInfo(android.content.ComponentName(target, component), 0)
+        }.getOrNull() ?: error("у $target нет активности $component")
+        if (!exported.exported) error("$component не экспортируется: открыть её снаружи нельзя")
+        // Where the answer is written: a file under a root the person already allowed, never a
+        // path of the caller's choosing.
+        val store = ru.uvw.dshnc.store.TokenStore(context)
+        if (!store.grant(client.grantKey())) {
+            error("${client.title}: управление выключено в настройках узла — включите «${client.title}» на экране «Разрешения»")
         }
+        val root = store.roots.firstOrNull() ?: error("нет доступа к каталогам: снятие профиля пишет файл")
+        val path = java.io.File(root, args.optString("file").trim().ifEmpty { "plugin-capture.json" }.substringAfterLast('/')).absolutePath
         val launch = android.content.Intent(context, ru.uvw.dshnc.PluginCaptureActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra("targetPackage", target)
@@ -363,10 +379,14 @@ class DeviceApi (private val context: Context) {
         if (!store.grant(client.grantKey())) {
             error("${client.title}: управление выключено в настройках узла — включите «${client.title}» на экране «Разрешения»")
         }
+        val installed = runCatching { context.packageManager.getPackageInfo(client.packageName, 0) }.isSuccess
+        if (!installed) error("приложение ${client.packageName} не установлено")
         val guid = store.vpnGuid(client.type)
         if (guid.isEmpty()) error("${client.title}: профиль не снят — откройте его действие в клиенте и сохраните через захват")
         if (!args.has("enabled")) error("нужно enabled: true или false")
-        val on = args.optBoolean("enabled")
+        val raw = args.opt("enabled")
+        if (raw !is Boolean) error("enabled должен быть true или false")
+        val on = raw
         val bundle = android.os.Bundle().apply {
             putString("tasker_extra_bundle_guid", guid)
             putBoolean("tasker_extra_bundle_switch", on)
