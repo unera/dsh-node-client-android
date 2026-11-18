@@ -403,21 +403,34 @@ class DeviceApi (private val context: Context) {
         return intent
     }
 
-    /** The JSON arguments as the plain map the request parser takes. */
+    /**
+     * The JSON arguments as the plain map the request parser takes.
+     *
+     * Nested objects are converted all the way down: a plugin `Bundle` extra sits two levels
+     * inside `extras`, and a JSONObject left as itself is not a Bundle.
+     */
     private fun plainMap (args: JSONObject): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>()
         for (key in args.keys()) {
-            when (val value = args.opt(key)) {
-                is JSONObject -> {
-                    val nested = LinkedHashMap<String, Any?>()
-                    for (inner in value.keys()) nested[inner] = value.opt(inner)
-                    out[key] = nested
-                }
-                JSONObject.NULL -> out[key] = null
-                else -> out[key] = value
-            }
+            out[key] = plainValue(args.opt(key))
         }
         return out
+    }
+
+    /** One JSON value as the Kotlin value the parser expects. */
+    private fun plainValue (value: Any?): Any? = when (value) {
+        is JSONObject -> {
+            val nested = LinkedHashMap<String, Any?>()
+            for (inner in value.keys()) nested[inner] = plainValue(value.opt(inner))
+            nested
+        }
+        is org.json.JSONArray -> {
+            val list = ArrayList<Any?>()
+            for (index in 0 until value.length()) list.add(plainValue(value.opt(index)))
+            list
+        }
+        JSONObject.NULL -> null
+        else -> value
     }
 
     /** A nested map as an Android Bundle, types already checked by `IntentRequest`. */
