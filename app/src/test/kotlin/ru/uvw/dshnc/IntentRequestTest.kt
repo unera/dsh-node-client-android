@@ -102,6 +102,29 @@ class IntentRequestTest {
     }
 
     @Test
+    fun `a nested object becomes a bundle and travels with the command`() {
+        // The Locale/Tasker plugin protocol carries its settings as one Bundle extra:
+        // `com.twofortyfouram.locale.intent.extra.BUNDLE`. Without nesting it cannot be spoken.
+        val request = IntentRequest.parse(
+            mapOf(
+                "action" to "com.twofortyfouram.locale.intent.action.FIRE_SETTING",
+                "package" to "com.v2raytun.android",
+                "extras" to mapOf(
+                    "com.twofortyfouram.locale.intent.extra.BLURB" to "start",
+                    "com.twofortyfouram.locale.intent.extra.BUNDLE" to mapOf("action" to "start", "on" to true),
+                ),
+            ),
+            IntentRequest.Kind.BROADCAST,
+        )
+        val bundle = request.extras["com.twofortyfouram.locale.intent.extra.BUNDLE"]
+        assertTrue("вложенный объект должен остаться объектом", bundle is Map<*, *>)
+        @Suppress("UNCHECKED_CAST")
+        val nested = bundle as Map<String, Any>
+        assertEquals("start", nested["action"])
+        assertEquals(true, nested["on"])
+    }
+
+    @Test
     fun `a package pins the request to one app`() {
         val request = IntentRequest.parse(mapOf("data" to "geo:55.75,37.61", "package" to "ru.yandex.yandexmaps"))
         assertEquals("ru.yandex.yandexmaps", request.packageName)

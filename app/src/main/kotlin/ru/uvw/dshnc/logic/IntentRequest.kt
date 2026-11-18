@@ -93,7 +93,10 @@ data class IntentRequest (
                 when (value) {
                     is String, is Boolean, is Int, is Long, is Double -> extras[name] = value
                     is Number -> extras[name] = value.toDouble()
-                    else -> throw IllegalArgumentException("дополнительный параметр $name должен быть строкой или числом")
+                    // A nested object becomes a Bundle — some plugin protocols (Tasker/Locale) carry
+                    // their settings as one Bundle extra and nothing else.
+                    is Map<*, *> -> extras[name] = bundleOf(value, name)
+                    else -> throw IllegalArgumentException("дополнительный параметр $name должен быть строкой, числом или объектом")
                 }
             }
             return IntentRequest(
@@ -105,6 +108,28 @@ data class IntentRequest (
                 className = (args["class"] as? String)?.trim()?.takeIf { it.isNotEmpty() },
                 extras = extras,
             )
+        }
+
+        /**
+         * A nested map as a bundle, checked key by key.
+         *
+         * @param value - the parsed JSON object.
+         * @param path - its name, for the sentence a refusal has to say.
+         * @returns a map the API layer turns into a Bundle.
+         */
+        private fun bundleOf (value: Map<*, *>, path: String): Map<String, Any> {
+            val out = LinkedHashMap<String, Any>()
+            for ((key, nested) in value) {
+                val name = (key as? String)?.trim().orEmpty()
+                if (name.isEmpty()) continue
+                when (nested) {
+                    is String, is Boolean, is Int, is Long, is Double -> out[name] = nested
+                    is Number -> out[name] = nested.toDouble()
+                    is Map<*, *> -> out[name] = bundleOf(nested, "$path.$name")
+                    else -> throw IllegalArgumentException("поле $path.$name: только строка, число или объект")
+                }
+            }
+            return out
         }
 
         /** A request that opens a URL — the only shape most calls need. */

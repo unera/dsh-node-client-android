@@ -61,7 +61,12 @@ class DeviceApi (private val context: Context) {
             .put(method("intent_broadcast", "Send a broadcast command to one app (package required)",
                 intentArgs(requireData = false)))
             .put(method("intent_service", "Start a service of one app (package required)",
-                intentArgs(requireData = false))))
+                intentArgs(requireData = false)))
+            .put(method("components", "What an app exposes: exported activities, services and receivers with their intents",
+                JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject().put("package", JSONObject().put("type", "string")))
+                    .put("required", JSONArray().put("package")))))
 
     /** The argument shape every intent method shares. */
     private fun intentArgs (requireData: Boolean): JSONObject {
@@ -99,6 +104,7 @@ class DeviceApi (private val context: Context) {
             "intent_open" -> intentStart(args)
             "intent_broadcast" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.BROADCAST)
             "intent_service" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.SERVICE)
+            "components" -> components(args)
             else -> error("unknown method $method")
         }
     } catch (error: Throwable) {
@@ -265,6 +271,47 @@ class DeviceApi (private val context: Context) {
     }
 
     /**
+     * What an app exposes to the outside world.
+     *
+     * The same list a launcher shows under "Activities", with the part that matters for
+     * automation: the intent filters. It is how a person finds out that a client has a
+     * `TaskerActivity`, or that its receiver listens to a `FIRE_SETTING` broadcast — without it,
+     * controlling an app is guesswork.
+     */
+    private fun components (args: JSONObject): JSONObject {
+        val target = args.optString("package").trim()
+        if (target.isEmpty()) error("нужен package")
+        val flags = android.content.pm.PackageManager.GET_ACTIVITIES or
+            android.content.pm.PackageManager.GET_SERVICES or
+            android.content.pm.PackageManager.GET_RECEIVERS
+        val info = runCatching { context.packageManager.getPackageInfo(target, flags) }.getOrNull()
+            ?: error("приложение $target не установлено")
+
+        // Exported components only: a private one cannot be reached from another app anyway, and
+        // the list is meant to answer "what can be called", not "what exists".
+        val activities = JSONArray()
+        for (activity in info.activities.orEmpty()) {
+            if (!activity.exported) continue
+            activities.put(JSONObject().put("name", activity.name))
+        }
+        val services = JSONArray()
+        for (service in info.services.orEmpty()) {
+            if (!service.exported) continue
+            services.put(JSONObject().put("name", service.name))
+        }
+        val receivers = JSONArray()
+        for (receiver in info.receivers.orEmpty()) {
+            if (!receiver.exported) continue
+            receivers.put(JSONObject().put("name", receiver.name))
+        }
+        return ok(JSONObject()
+            .put("package", target)
+            .put("activities", activities)
+            .put("services", services)
+            .put("receivers", receivers))
+    }
+
+    /**
      * Send a command to one app: a broadcast or a service start.
      *
      * This is how a VPN client, a media player or a home-automation app is toggled when it has
@@ -317,6 +364,7 @@ class DeviceApi (private val context: Context) {
                 is Int -> intent.putExtra(key, value)
                 is Long -> intent.putExtra(key, value)
                 is Double -> intent.putExtra(key, value)
+                is Map<*, *> -> intent.putExtra(key, bundleOf(value))
             }
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -338,6 +386,23 @@ class DeviceApi (private val context: Context) {
             }
         }
         return out
+    }
+
+    /** A nested map as an Android Bundle, types already checked by `IntentRequest`. */
+    private fun bundleOf (value: Map<*, *>): android.os.Bundle {
+        val bundle = android.os.Bundle()
+        for ((key, nested) in value) {
+            val name = key as? String ?: continue
+            when (nested) {
+                is String -> bundle.putString(name, nested)
+                is Boolean -> bundle.putBoolean(name, nested)
+                is Int -> bundle.putInt(name, nested)
+                is Long -> bundle.putLong(name, nested)
+                is Double -> bundle.putDouble(name, nested)
+                is Map<*, *> -> bundle.putBundle(name, bundleOf(nested))
+            }
+        }
+        return bundle
     }
 
     /** Who would open this: the answer the person needs before a launch surprises them. */
