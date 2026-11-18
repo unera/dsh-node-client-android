@@ -40,7 +40,8 @@ class PluginCaptureActivity : AppCompatActivity() {
             // "configure this from scratch" rather than "edit something you already know".
             putExtra(TAG_BUNDLE, Bundle())
             putExtra(TAG_BLURB, "")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // No NEW_TASK here: an activity started as a new task never returns a result, and the
+            // plugin's answer is the only thing this whole screen exists for.
         }
         runCatching { startActivityForResult(edit, REQUEST) }.onFailure { write(null, it.message ?: "не удалось открыть") }
     }
@@ -56,7 +57,9 @@ class PluginCaptureActivity : AppCompatActivity() {
             data?.getBundleExtra(TAG_BUNDLE) ?: data?.extras
         }
         val blurb = data?.getStringExtra(TAG_BLURB)
-        write(bundle, blurb)
+        // A cancel is an answer too: without a file a person cannot tell "I saved nothing" from
+        // "the capture is broken", and the difference decides what to do next.
+        write(bundle, blurb ?: if (resultCode == RESULT_OK) "ok" else "отменено")
         finish()
     }
 
