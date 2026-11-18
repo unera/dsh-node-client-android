@@ -11,4 +11,17 @@
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowAnimationStyle">@null</item>
     </style>
+    <!--
+        The capture screen is invisible by design, but it still has to be an AppCompat theme:
+        AppCompatActivity throws "You need to use a Theme.AppCompat theme" and the app dies the
+        moment the screen is opened. Translucent, no title, no dimming.
+    -->
+    <style name="Theme.Dshnc.Capture" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
 </resources>

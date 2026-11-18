@@ -80,7 +80,7 @@
         <activity
             android:name=".PluginCaptureActivity"
             android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/Theme.Dshnc.Capture" />
 
         <activity
             android:name=".MainActivity"
