@@ -447,8 +447,20 @@ class DeviceApi (private val context: Context) {
         val path = args.optString("path").trim()
         if (path.isEmpty()) error("нужен path к файлу .apk")
         val file = java.io.File(path)
-        if (!file.exists()) error("файл не найден: $path")
+        // The folder comes first, before any question about the file: a caller with the install
+        // switch and no file access must not be able to probe what exists on the card. Same
+        // reason the provider exposes one folder — a file outside it fails deep inside Android
+        // with "failed to find configured root", which explains nothing.
+        val shared = java.io.File(android.os.Environment.getExternalStorageDirectory(), "DSH")
+        val under = runCatching { file.canonicalPath.startsWith(shared.canonicalPath + "/") }.getOrDefault(false)
+        if (!under) error("файл должен лежать в ${shared.absolutePath}: только эту папку узел может показать установщику")
+        if (!file.exists()) error("файл не найден: ${file.name}")
         if (!file.name.endsWith(".apk", ignoreCase = true)) error("это не .apk: ${file.name}")
+        if (!android.provider.Settings.canDrawOverlays(context)) {
+            // A launch from the background is swallowed on Android 10+: the answer would say
+            // "opened" while nothing appeared. Say what is missing instead.
+            error("нет разрешения «поверх других приложений»: без него Android не покажет диалог из фона")
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
@@ -459,7 +471,9 @@ class DeviceApi (private val context: Context) {
             .setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(install)
+        runCatching { context.startActivity(install) }.onFailure {
+            error("не удалось открыть установщик: ${it.message}")
+        }
         return ok(JSONObject()
             .put("opened", true)
             .put("file", file.name)
