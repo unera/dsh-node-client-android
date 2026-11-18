@@ -417,6 +417,29 @@ class SectionActivity : AppCompatActivity() {
             getString(R.string.menu_popup), popup,
             getString(if (popup) R.string.popup_allowed else R.string.popup_denied),
         ) { PopupPermission.open(this) })
+
+        // Installing is a system dialog, but the system asks first whether this app may even
+        // offer a package. That switch lives in Settings, so the row exists to lead there.
+        val canInstall = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
+            packageManager.canRequestPackageInstalls()
+        push(permissionRow(
+            "Установка приложений", canInstall,
+            if (canInstall) {
+                "Узел может предложить APK системному установщику; ставит всё равно человек, в диалоге"
+            } else {
+                "Выключено — узел не может показать диалог установки"
+            },
+        ) { openInstallSettings() })
+    }
+
+    /** The system screen where "install unknown apps" is allowed for this app alone. */
+    private fun openInstallSettings () {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
+        val intent = android.content.Intent(
+            android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            android.net.Uri.parse("package:$packageName"),
+        )
+        runCatching { startActivity(intent) }.onFailure { openAppSettings() }
     }
 
     /**

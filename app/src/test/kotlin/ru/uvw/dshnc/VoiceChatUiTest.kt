@@ -1230,6 +1230,19 @@ class SettingsReachabilityTest {
     }
 
     @Test
+    fun `the install permission has a row of its own`() {
+        // Without this row the refusal names a switch the person cannot find from the app.
+        val screen = open("perm")
+        try {
+            val found = texts(screen)
+            assertTrue("строки про установку нет; на экране: $found",
+                found.any { it.contains("Установка приложений", ignoreCase = true) })
+        } finally {
+            screen.finish()
+        }
+    }
+
+    @Test
     fun `the dead screen is gone from the manifest`() {
         val manifest = java.io.File("src/main/AndroidManifest.xml")
         val file = if (manifest.exists()) manifest else java.io.File("app/src/main/AndroidManifest.xml")
