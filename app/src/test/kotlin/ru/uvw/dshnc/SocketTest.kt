@@ -52,6 +52,19 @@ class SocketTest {
     }
 
     /** A server side that records what the node sends and can talk back. */
+    /** Wait until some line satisfies the matcher: position in the stream is not a promise. */
+    private fun awaitLine (peer: Peer, deadlineMs: Long = 5000, match: (JSONObject) -> Boolean): JSONObject {
+        val until = System.currentTimeMillis() + deadlineMs
+        while (System.currentTimeMillis() < until) {
+            for (line in peer.lines.toList()) {
+                val json = runCatching { JSONObject(line) }.getOrNull() ?: continue
+                if (match(json)) return json
+            }
+            Thread.sleep(10)
+        }
+        throw AssertionError("ожидаемая строка не пришла; было: ${peer.lines.toList()}")
+    }
+
     private inner class Peer : WebSocketListener() {
         val lines = java.util.concurrent.CopyOnWriteArrayList<String>()
         private val frames = java.util.concurrent.CountDownLatch(1)
@@ -131,15 +144,13 @@ class SocketTest {
         socket.connect()
         assertTrue(opened.await(5, TimeUnit.SECONDS))
         socket.ping(7)
+        // The ping is somewhere in the stream, not necessarily second: the first frame is the
+        // state, but a second state frame may follow. Wait for the line that is the ping.
+        val ping = awaitLine(peer) { it.optString("t") == "ping" && it.optInt("no") == 7 }
         // the server answers with the same number, as the protocol describes
-        val answered = CountDownLatch(1)
-        Thread {
-            while (peer.lines.size < 2) Thread.sleep(10)
-            peer.socket?.send("""{"t":"pong","no":7}""")
-            answered.countDown()
-        }.apply { isDaemon = true; start() }
+        peer.socket?.send("""{"t":"pong","no":7}""")
         assertTrue("pong не вернулся", pong.await(5, TimeUnit.SECONDS))
-        assertEquals(7, JSONObject(peer.lines[1]).optInt("no"))
+        assertEquals(7, ping.optInt("no"))
         assertNotNull("rtt не посчитан", reported)
         socket.close()
     }

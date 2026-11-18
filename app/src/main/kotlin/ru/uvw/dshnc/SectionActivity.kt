@@ -186,6 +186,18 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
+    /** Drop the VPN binding, keeping the switch: a switch with nothing to switch is honest. */
+    private fun askVpnUnbind () {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setMessage("Отвязать VPN? Узел перестанет знать, какой профиль переключать. Переключатель «Управление VPN» останется.")
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton("Отвязать") { _, _ ->
+                store.unbindVpn()
+                recreate()
+            }
+            .show()
+    }
+
     /** Forgetting is irreversible: the token cannot be restored, only a new code obtained. */
     private fun confirmForget () {
         androidx.appcompat.app.AlertDialog.Builder(this)
@@ -385,10 +397,28 @@ class SectionActivity : AppCompatActivity() {
 
         push(Ui.itemEx(
             this,
+            "Управление VPN",
+            if (store.vpnGuid.isEmpty()) "не привязано" else "${appLabel(store.vpnPackage)} · ${store.vpnProfile.ifBlank { "профиль" }}",
+            Ui.stateColor(store.vpnGuid.isNotEmpty()),
+            if (store.vpnGuid.isEmpty()) {
+                "Пока не привязано: включите переключатель выше и привяжите профиль через android.vpn_bind"
+            } else {
+                "Разрешено переключать этот профиль. Нажмите, чтобы отвязать"
+            },
+            {
+                if (store.vpnGuid.isNotEmpty()) {
+                    askVpnUnbind()
+                }
+            },
+        ))
+        push(Ui.divider(this))
+
+        push(Ui.itemEx(
+            this,
             "Кому можно открываться",
             if (store.apps.isEmpty()) "никому нельзя" else "${store.apps.size} шт.",
             Ui.stateColor(true),
-            "Список приложений, которым разрешено открывать ссылки по запросу извне; пусто — любое",
+            "Список приложений, которым разрешено открывать ссылки по запросу извне; пусто — никому нельзя",
             { open("intents") },
         ))
         push(Ui.divider(this))
@@ -468,7 +498,8 @@ class SectionActivity : AppCompatActivity() {
         ru.uvw.dshnc.logic.Grants.Grant.SHELL -> "Выключено — exec отвечает отказом, команды на телефоне не выполняются"
         ru.uvw.dshnc.logic.Grants.Grant.ALARMS -> "Выключено — управление будильниками отвечает ошибкой"
         ru.uvw.dshnc.logic.Grants.Grant.INTENTS -> "Выключено — открыть навигатор или браузер по ссылке нельзя"
-        ru.uvw.dshnc.logic.Grants.Grant.COMMANDS -> "Выключено — молчаливые команды приложениям не отправляются: так переключают VPN, плеер, умный дом"
+        ru.uvw.dshnc.logic.Grants.Grant.COMMANDS -> "Выключено — молчаливые команды приложениям не отправляются: так переключают плеер, умный дом"
+        ru.uvw.dshnc.logic.Grants.Grant.VPN -> "Выключено — включить или выключить VPN с телефона нельзя; настройки приложения остаются доступны"
         ru.uvw.dshnc.logic.Grants.Grant.FILES -> "Выключено — файлы и каталоги недоступны, остаётся только оболочка"
         ru.uvw.dshnc.logic.Grants.Grant.DEBUG -> "Выключено — список приложений и отладочные сведения не отдаются"
         ru.uvw.dshnc.logic.Grants.Grant.VOICE -> "Выключено — голосовой чат и синтез не работают"

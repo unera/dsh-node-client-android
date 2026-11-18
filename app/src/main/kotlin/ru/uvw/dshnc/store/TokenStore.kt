@@ -192,6 +192,41 @@ class TokenStore(private val context: Context) {
     fun setGrant (key: String, allowed: Boolean) = write("grant-$key", if (allowed) null else "0")
 
     /**
+     * The VPN client this node may switch, and the profile inside it.
+     *
+     * A VPN cannot be toggled by a system call, so the node repeats the client's own plugin
+     * command: a package, a receiver and one profile id. That is a specific promise about a
+     * specific app, and it is kept here — not in the caller's arguments.
+     */
+    var vpnPackage: String
+        get() = read("vpn-package") ?: ""
+        set(value) = write("vpn-package", value.trim().ifBlank { null })
+
+    /** The profile the client should switch on. */
+    var vpnGuid: String
+        get() = read("vpn-guid") ?: ""
+        set(value) = write("vpn-guid", value.trim().ifBlank { null })
+
+    /** The profile's name, for the person to recognise it on the screen. */
+    var vpnProfile: String
+        get() = read("vpn-profile") ?: ""
+        set(value) = write("vpn-profile", value.trim().ifBlank { null })
+
+    /** Bind the node to one client and one profile; the three travel together. */
+    fun bindVpn (packageName: String, guid: String, profile: String) {
+        vpnPackage = packageName
+        vpnGuid = guid
+        vpnProfile = profile
+    }
+
+    /** Forget the binding: the VPN switch stays, but it has nothing to switch. */
+    fun unbindVpn () {
+        vpnPackage = ""
+        vpnGuid = ""
+        vpnProfile = ""
+    }
+
+    /**
      * A newer instance of this node took the channel (`4001 replaced`) and this one stopped.
      *
      * The flag exists because stopping is not enough: the ten-minute alarm used to bring the

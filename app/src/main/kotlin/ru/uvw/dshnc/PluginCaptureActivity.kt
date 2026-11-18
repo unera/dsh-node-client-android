@@ -81,6 +81,24 @@ class PluginCaptureActivity : AppCompatActivity() {
             .put("extras", BundleJson.of(bundle))
             .put("capturedAt", System.currentTimeMillis())
         runCatching { File(path).writeText(payload.toString(2)) }
+        // A captured action that names a profile is exactly what the VPN switch needs: the node
+        // keeps the id, the caller says only "on" or "off". Capturing is how the binding appears.
+        val guid = bundle?.getString("tasker_extra_bundle_guid")
+        val pkg = intent.getStringExtra("targetPackage")
+        if (!guid.isNullOrBlank() && !pkg.isNullOrBlank()) {
+            TokenStore(this).bindVpn(pkg, guid, blurbOf(payload))
+        }
+    }
+
+    /**
+     * The profile name as the person saw it.
+     *
+     * The blurb reads "Start home" — the action first, the profile second. Only the profile is
+     * worth keeping: the action is what the `switch` flag says anyway.
+     */
+    private fun blurbOf (payload: JSONObject): String {
+        val words = payload.optString("blurb").trim().split(" ").filter { it.isNotBlank() }
+        return if (words.size > 1) words.last() else words.firstOrNull().orEmpty()
     }
 
     private companion object {

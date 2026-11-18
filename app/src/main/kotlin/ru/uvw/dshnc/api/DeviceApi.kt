@@ -70,6 +70,20 @@ class DeviceApi (private val context: Context) {
                         .put("class", JSONObject().put("type", "string"))
                         .put("file", JSONObject().put("type", "string")))
                     .put("required", JSONArray().put("package").put("class"))))
+            .put(method("vpn", "Switch the bound VPN profile on or off (no window, no arguments beyond the state)",
+                JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject().put("state", JSONObject().put("type", "string")
+                        .put("enum", JSONArray().put("on").put("off"))))
+                    .put("required", JSONArray().put("state"))))
+            .put(method("vpn_bind", "Bind one VPN client and profile to this node (the app's plugin command)",
+                JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject()
+                        .put("package", JSONObject().put("type", "string"))
+                        .put("guid", JSONObject().put("type", "string"))
+                        .put("profile", JSONObject().put("type", "string")))
+                    .put("required", JSONArray().put("package").put("guid"))))
             .put(method("components", "What an app exposes: exported activities, services and receivers with their intents",
                 JSONObject()
                     .put("type", "object")
@@ -113,6 +127,8 @@ class DeviceApi (private val context: Context) {
             "intent_broadcast" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.BROADCAST)
             "intent_service" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.SERVICE)
             "components" -> components(args)
+            "vpn" -> vpnSwitch(args)
+            "vpn_bind" -> vpnBind(args)
             "intent_edit" -> intentEdit(args)
             else -> error("unknown method $method")
         }
@@ -308,6 +324,59 @@ class DeviceApi (private val context: Context) {
             .putExtra("file", path)
         context.startActivity(launch)
         return ok(JSONObject().put("opened", true).put("package", target).put("class", component).put("file", path))
+    }
+
+    /**
+     * Switch the bound VPN profile.
+     *
+     * Android has no system call for this: a VPN belongs to its app. What works is the app's own
+     * plugin command, which is a broadcast with one profile id and one flag — so the node keeps
+     * the id and the caller says only "on" or "off".
+     */
+    private fun vpnSwitch (args: JSONObject): JSONObject {
+        val store = ru.uvw.dshnc.store.TokenStore(context)
+        val target = store.vpnPackage
+        val guid = store.vpnGuid
+        if (target.isEmpty() || guid.isEmpty()) {
+            error("VPN не привязан: откройте «Разрешения» → «Управление VPN» и укажите приложение и профиль")
+        }
+        val want = args.optString("state").trim().lowercase()
+        val on = when (want) {
+            "on", "вкл", "включить", "true", "1" -> true
+            "off", "выкл", "выключить", "false", "0" -> false
+            else -> error("нужно state: on или off")
+        }
+        val bundle = android.os.Bundle()
+            .apply {
+                putString("tasker_extra_bundle_guid", guid)
+                putBoolean("tasker_extra_bundle_switch", on)
+            }
+        val command = android.content.Intent("com.twofortyfouram.locale.intent.action.FIRE_SETTING")
+            .setClassName(target, "com.v2raytun.android.receiver.TaskerReceiver")
+            .putExtra("com.twofortyfouram.locale.intent.extra.BLURB", if (on) "Start" else "Stop")
+            .putExtra("com.twofortyfouram.locale.intent.extra.BUNDLE", bundle)
+        context.sendBroadcast(command)
+        return ok(JSONObject()
+            .put("sent", true)
+            .put("state", if (on) "on" else "off")
+            .put("package", target)
+            .put("profile", store.vpnProfile))
+    }
+
+    /** Bind a client and a profile, so that `vpn` has something to switch. */
+    private fun vpnBind (args: JSONObject): JSONObject {
+        val target = args.optString("package").trim()
+        val guid = args.optString("guid").trim()
+        if (target.isEmpty() || guid.isEmpty()) error("нужны package и guid")
+        val installed = runCatching { context.packageManager.getPackageInfo(target, 0) }.isSuccess
+        if (!installed) error("приложение $target не установлено")
+        val store = ru.uvw.dshnc.store.TokenStore(context)
+        store.bindVpn(target, guid, args.optString("profile").trim())
+        return ok(JSONObject()
+            .put("bound", true)
+            .put("package", target)
+            .put("profile", store.vpnProfile)
+            .put("guid", guid))
     }
 
     private fun components (args: JSONObject): JSONObject {

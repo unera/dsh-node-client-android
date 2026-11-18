@@ -40,6 +40,16 @@ class GrantsTest {
     }
 
     @Test
+    fun `the vpn switch guards the vpn methods and nothing else`() {
+        assertEquals(Grants.Grant.VPN, Grants.needed("vpn"))
+        assertEquals(Grants.Grant.VPN, Grants.needed("vpn_bind"))
+        // switching someone's tunnel is a bigger promise than opening a screen
+        assertTrue(Grants.Grant.INTENTS != Grants.needed("vpn"))
+        assertTrue(Grants.allows("vpn") { it == Grants.Grant.VPN })
+        assertFalse(Grants.allows("vpn") { it != Grants.Grant.VPN })
+    }
+
+    @Test
     fun `silent commands have a switch of their own`() {
         assertEquals(Grants.Grant.COMMANDS, Grants.needed("intent_broadcast"))
         assertEquals(Grants.Grant.COMMANDS, Grants.needed("intent_service"))
