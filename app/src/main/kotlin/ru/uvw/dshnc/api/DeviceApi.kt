@@ -62,6 +62,14 @@ class DeviceApi (private val context: Context) {
                 intentArgs(requireData = false)))
             .put(method("intent_service", "Start a service of one app (package required)",
                 intentArgs(requireData = false)))
+            .put(method("intent_edit", "Open an app's plugin editor (Tasker/Locale) and keep the bundle it returns",
+                JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject()
+                        .put("package", JSONObject().put("type", "string"))
+                        .put("class", JSONObject().put("type", "string"))
+                        .put("file", JSONObject().put("type", "string")))
+                    .put("required", JSONArray().put("package").put("class"))))
             .put(method("components", "What an app exposes: exported activities, services and receivers with their intents",
                 JSONObject()
                     .put("type", "object")
@@ -105,6 +113,7 @@ class DeviceApi (private val context: Context) {
             "intent_broadcast" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.BROADCAST)
             "intent_service" -> intentCommand(args, ru.uvw.dshnc.logic.IntentRequest.Kind.SERVICE)
             "components" -> components(args)
+            "intent_edit" -> intentEdit(args)
             else -> error("unknown method $method")
         }
     } catch (error: Throwable) {
@@ -278,6 +287,29 @@ class DeviceApi (private val context: Context) {
      * `TaskerActivity`, or that its receiver listens to a `FIRE_SETTING` broadcast — without it,
      * controlling an app is guesswork.
      */
+    /**
+     * Play a plugin host for one round: open the app's editor and keep what it returns.
+     *
+     * The result arrives later, after the person taps around in someone else's screen, so this
+     * answers at once and the answer is read from the file afterwards.
+     */
+    private fun intentEdit (args: JSONObject): JSONObject {
+        val target = args.optString("package").trim()
+        val component = args.optString("class").trim()
+        if (target.isEmpty() || component.isEmpty()) error("нужны package и class")
+        val path = args.optString("file").trim().ifEmpty {
+            val root = ru.uvw.dshnc.store.TokenStore(context).roots.firstOrNull() ?: context.filesDir.absolutePath
+            java.io.File(root, "plugin-capture.json").absolutePath
+        }
+        val launch = android.content.Intent(context, ru.uvw.dshnc.PluginCaptureActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra("targetPackage", target)
+            .putExtra("targetClass", component)
+            .putExtra("file", path)
+        context.startActivity(launch)
+        return ok(JSONObject().put("opened", true).put("package", target).put("class", component).put("file", path))
+    }
+
     private fun components (args: JSONObject): JSONObject {
         val target = args.optString("package").trim()
         if (target.isEmpty()) error("нужен package")

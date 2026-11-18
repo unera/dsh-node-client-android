@@ -78,6 +78,11 @@
         android:theme="@style/Theme.Dshnc">
 
         <activity
+            android:name=".PluginCaptureActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask">
