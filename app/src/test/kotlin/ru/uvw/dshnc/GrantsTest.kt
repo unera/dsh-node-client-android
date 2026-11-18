@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import ru.uvw.dshnc.logic.Grants
+import ru.uvw.dshnc.logic.VpnClient
 
 /**
  * Which switch a call needs, and what a refused call answers.
@@ -40,13 +41,18 @@ class GrantsTest {
     }
 
     @Test
-    fun `the vpn switch guards the vpn methods and nothing else`() {
-        assertEquals(Grants.Grant.VPN, Grants.needed("vpn"))
-        assertEquals(Grants.Grant.VPN, Grants.needed("vpn_bind"))
-        // switching someone's tunnel is a bigger promise than opening a screen
-        assertTrue(Grants.Grant.INTENTS != Grants.needed("vpn"))
-        assertTrue(Grants.allows("vpn") { it == Grants.Grant.VPN })
-        assertFalse(Grants.allows("vpn") { it != Grants.Grant.VPN })
+    fun `a known vpn client is named, never described by a caller`() {
+        // The list is the allow list: a caller names "v2raytun", and the node knows the package
+        // and the receiver. "Some package, some action" is a broadcast primitive, not a VPN.
+        val client = VpnClient.byType("v2raytun")
+        assertTrue(client != null)
+        assertEquals("com.v2raytun.android", client?.packageName)
+        assertEquals("com.v2raytun.android.receiver.TaskerReceiver", client?.receiver)
+        assertTrue(VpnClient.byType("V2RayTun") != null)
+        assertTrue(VpnClient.byType("openvpn") == null)
+        assertTrue(VpnClient.byType("") == null)
+        // a switch per client, so one client cannot be switched by another's permission
+        assertEquals("vpn-v2raytun", client?.grantKey())
     }
 
     @Test

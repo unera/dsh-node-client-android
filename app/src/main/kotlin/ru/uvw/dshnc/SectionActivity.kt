@@ -186,16 +186,44 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
-    /** Drop the VPN binding, keeping the switch: a switch with nothing to switch is honest. */
-    private fun askVpnUnbind () {
+    /** Drop the profile binding, keeping the client's switch. */
+    private fun askVpnUnbind (client: ru.uvw.dshnc.logic.VpnClient) {
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setMessage("Отвязать VPN? Узел перестанет знать, какой профиль переключать. Переключатель «Управление VPN» останется.")
+            .setMessage("Забыть профиль ${client.title}? Переключатель останется, но переключать будет нечего.")
             .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton("Отвязать") { _, _ ->
-                store.unbindVpn()
+            .setPositiveButton("Забыть") { _, _ ->
+                store.unbindVpn(client.type)
                 recreate()
             }
             .show()
+    }
+
+    /**
+     * One known client: its switch, and what it is bound to.
+     *
+     * Tapping the line forgets the bound profile; the switch above it stays where it is. A row
+     * that reacts only sometimes is worse than a row that always explains itself.
+     */
+    private fun vpnRow (client: ru.uvw.dshnc.logic.VpnClient): android.view.View {
+        val allowed = store.grant(client.grantKey())
+        val profile = store.vpnProfile(client.type)
+        val guid = store.vpnGuid(client.type)
+        val row = Ui.itemEx(
+            this,
+            client.title,
+            if (!allowed) "выключено" else if (guid.isEmpty()) "профиль не снят" else "включено · $profile",
+            Ui.stateColor(allowed && guid.isNotEmpty()),
+            if (!allowed) {
+                "Выключено — включать и выключать ${client.title} с телефона нельзя"
+            } else if (guid.isEmpty()) {
+                "Разрешено, но профиль не снят: откройте ${client.title} в режиме захвата действия"
+            } else {
+                "Разрешено переключать профиль $profile. Нажмите, чтобы забыть профиль"
+            },
+            { if (guid.isNotEmpty()) askVpnUnbind(client) },
+        )
+        row.isClickable = true
+        return row
     }
 
     /** Forgetting is irreversible: the token cannot be restored, only a new code obtained. */
@@ -395,23 +423,12 @@ class SectionActivity : AppCompatActivity() {
             push(Ui.divider(this))
         }
 
-        push(Ui.itemEx(
-            this,
-            "Управление VPN",
-            if (store.vpnGuid.isEmpty()) "не привязано" else "${appLabel(store.vpnPackage)} · ${store.vpnProfile.ifBlank { "профиль" }}",
-            Ui.stateColor(store.vpnGuid.isNotEmpty()),
-            if (store.vpnGuid.isEmpty()) {
-                "Пока не привязано: включите переключатель выше и привяжите профиль через android.vpn_bind"
-            } else {
-                "Разрешено переключать этот профиль. Нажмите, чтобы отвязать"
-            },
-            {
-                if (store.vpnGuid.isNotEmpty()) {
-                    askVpnUnbind()
-                }
-            },
-        ))
+        push(Ui.item(this, "Известные VPN", "Каждый клиент переключается своей командой; профиль снимается захватом действия в самом клиенте", null))
         push(Ui.divider(this))
+        for (client in ru.uvw.dshnc.logic.VpnClient.KNOWN) {
+            push(vpnRow(client))
+            push(Ui.divider(this))
+        }
 
         push(Ui.itemEx(
             this,
@@ -499,7 +516,6 @@ class SectionActivity : AppCompatActivity() {
         ru.uvw.dshnc.logic.Grants.Grant.ALARMS -> "Выключено — управление будильниками отвечает ошибкой"
         ru.uvw.dshnc.logic.Grants.Grant.INTENTS -> "Выключено — открыть навигатор или браузер по ссылке нельзя"
         ru.uvw.dshnc.logic.Grants.Grant.COMMANDS -> "Выключено — молчаливые команды приложениям не отправляются: так переключают плеер, умный дом"
-        ru.uvw.dshnc.logic.Grants.Grant.VPN -> "Выключено — включить или выключить VPN с телефона нельзя; настройки приложения остаются доступны"
         ru.uvw.dshnc.logic.Grants.Grant.FILES -> "Выключено — файлы и каталоги недоступны, остаётся только оболочка"
         ru.uvw.dshnc.logic.Grants.Grant.DEBUG -> "Выключено — список приложений и отладочные сведения не отдаются"
         ru.uvw.dshnc.logic.Grants.Grant.VOICE -> "Выключено — голосовой чат и синтез не работают"

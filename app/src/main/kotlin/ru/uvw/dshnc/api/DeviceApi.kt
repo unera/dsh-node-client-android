@@ -70,20 +70,22 @@ class DeviceApi (private val context: Context) {
                         .put("class", JSONObject().put("type", "string"))
                         .put("file", JSONObject().put("type", "string")))
                     .put("required", JSONArray().put("package").put("class"))))
-            .put(method("vpn", "Switch the bound VPN profile on or off (no window, no arguments beyond the state)",
-                JSONObject()
-                    .put("type", "object")
-                    .put("properties", JSONObject().put("state", JSONObject().put("type", "string")
-                        .put("enum", JSONArray().put("on").put("off"))))
-                    .put("required", JSONArray().put("state"))))
-            .put(method("vpn_bind", "Bind one VPN client and profile to this node (the app's plugin command)",
+            .put(method("vpn", "Switch a known VPN client on or off (v2RayTun: type=v2raytun)",
                 JSONObject()
                     .put("type", "object")
                     .put("properties", JSONObject()
-                        .put("package", JSONObject().put("type", "string"))
+                        .put("type", JSONObject().put("type", "string")
+                            .put("description", ru.uvw.dshnc.logic.VpnClient.types()))
+                        .put("enabled", JSONObject().put("type", "boolean")))
+                    .put("required", JSONArray().put("type").put("enabled"))))
+            .put(method("vpn_bind", "Bind a profile id to a known VPN client (filled in by the capture)",
+                JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject()
+                        .put("type", JSONObject().put("type", "string"))
                         .put("guid", JSONObject().put("type", "string"))
                         .put("profile", JSONObject().put("type", "string")))
-                    .put("required", JSONArray().put("package").put("guid"))))
+                    .put("required", JSONArray().put("type").put("guid"))))
             .put(method("components", "What an app exposes: exported activities, services and receivers with their intents",
                 JSONObject()
                     .put("type", "object")
@@ -334,49 +336,52 @@ class DeviceApi (private val context: Context) {
      * the id and the caller says only "on" or "off".
      */
     private fun vpnSwitch (args: JSONObject): JSONObject {
+        val type = args.optString("type").trim()
+        val client = ru.uvw.dshnc.logic.VpnClient.byType(type)
+            ?: error("неизвестный клиент ${if (type.isEmpty()) "(type не указан)" else type}: известны ${ru.uvw.dshnc.logic.VpnClient.types()}")
         val store = ru.uvw.dshnc.store.TokenStore(context)
-        val target = store.vpnPackage
-        val guid = store.vpnGuid
-        if (target.isEmpty() || guid.isEmpty()) {
-            error("VPN не привязан: откройте «Разрешения» → «Управление VPN» и укажите приложение и профиль")
+        if (!store.grant(client.grantKey())) {
+            error("${client.title}: управление выключено в настройках узла — включите «${client.title}» на экране «Разрешения»")
         }
-        val want = args.optString("state").trim().lowercase()
-        val on = when (want) {
-            "on", "вкл", "включить", "true", "1" -> true
-            "off", "выкл", "выключить", "false", "0" -> false
-            else -> error("нужно state: on или off")
+        val guid = store.vpnGuid(client.type)
+        if (guid.isEmpty()) error("${client.title}: профиль не снят — откройте его действие в клиенте и сохраните через захват")
+        if (!args.has("enabled")) error("нужно enabled: true или false")
+        val on = args.optBoolean("enabled")
+        val bundle = android.os.Bundle().apply {
+            putString("tasker_extra_bundle_guid", guid)
+            putBoolean("tasker_extra_bundle_switch", on)
         }
-        val bundle = android.os.Bundle()
-            .apply {
-                putString("tasker_extra_bundle_guid", guid)
-                putBoolean("tasker_extra_bundle_switch", on)
-            }
         val command = android.content.Intent("com.twofortyfouram.locale.intent.action.FIRE_SETTING")
-            .setClassName(target, "com.v2raytun.android.receiver.TaskerReceiver")
+            .setClassName(client.packageName, client.receiver)
             .putExtra("com.twofortyfouram.locale.intent.extra.BLURB", if (on) "Start" else "Stop")
             .putExtra("com.twofortyfouram.locale.intent.extra.BUNDLE", bundle)
         context.sendBroadcast(command)
         return ok(JSONObject()
             .put("sent", true)
-            .put("state", if (on) "on" else "off")
-            .put("package", target)
-            .put("profile", store.vpnProfile))
+            .put("type", client.type)
+            .put("enabled", on)
+            .put("profile", store.vpnProfile(client.type)))
     }
 
-    /** Bind a client and a profile, so that `vpn` has something to switch. */
+    /**
+     * Bind a profile to a known client, so that `vpn` has something to switch.
+     *
+     * Called by the capture screen automatically, and by hand when a profile changes.
+     */
     private fun vpnBind (args: JSONObject): JSONObject {
-        val target = args.optString("package").trim()
+        val type = args.optString("type").trim()
+        val client = ru.uvw.dshnc.logic.VpnClient.byType(type)
+            ?: error("неизвестный клиент ${if (type.isEmpty()) "(type не указан)" else type}: известны ${ru.uvw.dshnc.logic.VpnClient.types()}")
         val guid = args.optString("guid").trim()
-        if (target.isEmpty() || guid.isEmpty()) error("нужны package и guid")
-        val installed = runCatching { context.packageManager.getPackageInfo(target, 0) }.isSuccess
-        if (!installed) error("приложение $target не установлено")
+        if (guid.isEmpty()) error("нужен guid профиля")
+        val installed = runCatching { context.packageManager.getPackageInfo(client.packageName, 0) }.isSuccess
+        if (!installed) error("приложение ${client.packageName} не установлено")
         val store = ru.uvw.dshnc.store.TokenStore(context)
-        store.bindVpn(target, guid, args.optString("profile").trim())
+        store.bindVpn(client.type, guid, args.optString("profile").trim())
         return ok(JSONObject()
             .put("bound", true)
-            .put("package", target)
-            .put("profile", store.vpnProfile)
-            .put("guid", guid))
+            .put("type", client.type)
+            .put("profile", store.vpnProfile(client.type)))
     }
 
     private fun components (args: JSONObject): JSONObject {

@@ -85,8 +85,9 @@ class PluginCaptureActivity : AppCompatActivity() {
         // keeps the id, the caller says only "on" or "off". Capturing is how the binding appears.
         val guid = bundle?.getString("tasker_extra_bundle_guid")
         val pkg = intent.getStringExtra("targetPackage")
-        if (!guid.isNullOrBlank() && !pkg.isNullOrBlank()) {
-            TokenStore(this).bindVpn(pkg, guid, blurbOf(payload))
+        val client = ru.uvw.dshnc.logic.VpnClient.KNOWN.firstOrNull { it.packageName == pkg }
+        if (!guid.isNullOrBlank() && client != null) {
+            TokenStore(this).bindVpn(client.type, guid, blurbOf(payload))
         }
     }
 

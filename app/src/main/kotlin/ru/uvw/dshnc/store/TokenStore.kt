@@ -192,38 +192,27 @@ class TokenStore(private val context: Context) {
     fun setGrant (key: String, allowed: Boolean) = write("grant-$key", if (allowed) null else "0")
 
     /**
-     * The VPN client this node may switch, and the profile inside it.
+     * The profile bound to a known VPN client, and the name a person recognises.
      *
      * A VPN cannot be toggled by a system call, so the node repeats the client's own plugin
-     * command: a package, a receiver and one profile id. That is a specific promise about a
-     * specific app, and it is kept here — not in the caller's arguments.
+     * command: a profile id inside a specific app. The id is per person and per profile, so it is
+     * kept here — the caller says only which client and whether to switch it on.
      */
-    var vpnPackage: String
-        get() = read("vpn-package") ?: ""
-        set(value) = write("vpn-package", value.trim().ifBlank { null })
+    fun vpnGuid (type: String): String = read("vpn-$type-guid") ?: ""
 
-    /** The profile the client should switch on. */
-    var vpnGuid: String
-        get() = read("vpn-guid") ?: ""
-        set(value) = write("vpn-guid", value.trim().ifBlank { null })
+    /** The profile's name as the person saw it, e.g. "home". */
+    fun vpnProfile (type: String): String = read("vpn-$type-profile") ?: ""
 
-    /** The profile's name, for the person to recognise it on the screen. */
-    var vpnProfile: String
-        get() = read("vpn-profile") ?: ""
-        set(value) = write("vpn-profile", value.trim().ifBlank { null })
-
-    /** Bind the node to one client and one profile; the three travel together. */
-    fun bindVpn (packageName: String, guid: String, profile: String) {
-        vpnPackage = packageName
-        vpnGuid = guid
-        vpnProfile = profile
+    /** Bind one profile to one client type; the pair is what a switch can promise. */
+    fun bindVpn (type: String, guid: String, profile: String) {
+        write("vpn-$type-guid", guid.trim().ifBlank { null })
+        write("vpn-$type-profile", profile.trim().ifBlank { null })
     }
 
-    /** Forget the binding: the VPN switch stays, but it has nothing to switch. */
-    fun unbindVpn () {
-        vpnPackage = ""
-        vpnGuid = ""
-        vpnProfile = ""
+    /** Forget the profile, keeping the client's switch: a switch with nothing to switch is honest. */
+    fun unbindVpn (type: String) {
+        write("vpn-$type-guid", null)
+        write("vpn-$type-profile", null)
     }
 
     /**
