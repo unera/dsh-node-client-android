@@ -41,6 +41,21 @@ class GrantsTest {
     }
 
     @Test
+    fun `a command aimed at a vpn client is recognised as one`() {
+        // Without this, intent_broadcast walks around the VPN switch and makes it decorative.
+        val full = "com.v2raytun.android.receiver.TaskerReceiver"
+        assertTrue(VpnClient.byCommand("com.v2raytun.android", full) != null)
+        assertTrue(VpnClient.byCommand("com.v2raytun.android", ".receiver.TaskerReceiver")?.type == "v2raytun")
+        assertTrue(VpnClient.byCommand("com.v2raytun.android", "receiver.TaskerReceiver")?.type == "v2raytun")
+        assertTrue(VpnClient.byCommand("com.v2raytun.android", "TaskerReceiver")?.type == "v2raytun")
+        assertTrue(VpnClient.byCommand("com.v2raytun.android", null)?.type == "v2raytun")
+        // a different receiver of the same app is not the VPN command
+        assertTrue(VpnClient.byCommand("com.v2raytun.android", "com.v2raytun.android.receiver.BootReceiver") == null)
+        // and another package is nobody's
+        assertTrue(VpnClient.byCommand("org.telegram.messenger", full) == null)
+    }
+
+    @Test
     fun `every method the api answers is routed to it`() {
         // Three times a new method fell into the files dispatcher and answered path_denied.
         // The list is the dispatcher's only question, so this test asks it of every method.

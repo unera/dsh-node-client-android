@@ -37,5 +37,24 @@ data class VpnClient (
 
         /** @returns the types a caller may name, for the refusal to list them. */
         fun types (): String = KNOWN.joinToString(", ") { it.type }
+
+        /**
+         * The client a raw command is aimed at, if any.
+         *
+         * A command that reaches a VPN client's receiver *is* a VPN command, whatever method
+         * carried it: without this check `intent_broadcast` would walk around the VPN switch and
+         * leave it decorative.
+         *
+         * @param packageName - the package the command names.
+         * @param className - the component, full or short; null when the caller named none.
+         */
+        fun byCommand (packageName: String, className: String?): VpnClient? = KNOWN.firstOrNull { client ->
+            if (client.packageName != packageName) return@firstOrNull false
+            if (className == null) return@firstOrNull true
+            // Android accepts several spellings of the same component; one of them is the
+            // receiver we guard, so compare against all of them rather than against one string.
+            val relative = client.receiver.removePrefix(client.packageName).removePrefix(".")
+            className in setOf(client.receiver, relative, ".$relative", relative.substringAfterLast('.'))
+        }
     }
 }

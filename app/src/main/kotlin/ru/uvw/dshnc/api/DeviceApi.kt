@@ -397,6 +397,9 @@ class DeviceApi (private val context: Context) {
         val installed = runCatching { context.packageManager.getPackageInfo(client.packageName, 0) }.isSuccess
         if (!installed) error("приложение ${client.packageName} не установлено")
         val store = ru.uvw.dshnc.store.TokenStore(context)
+        if (!store.grant(client.grantKey())) {
+            error("${client.title}: управление выключено в настройках узла — включите «${client.title}» на экране «Разрешения»")
+        }
         store.bindVpn(client.type, guid, args.optString("profile").trim())
         return ok(JSONObject()
             .put("bound", true)
@@ -448,6 +451,12 @@ class DeviceApi (private val context: Context) {
         val request = ru.uvw.dshnc.logic.IntentRequest.parse(plainMap(args), kind)
         val intent = intentOf(request)
         val target = request.packageName ?: error("нужен package")
+        // A command aimed at a VPN client is a VPN command, whatever method carried it: letting
+        // `intent_broadcast` reach the same receiver would make the VPN switch decorative.
+        val vpnClient = ru.uvw.dshnc.logic.VpnClient.byCommand(target, request.className)
+        if (vpnClient != null && !ru.uvw.dshnc.store.TokenStore(context).grant(vpnClient.grantKey())) {
+            error("${vpnClient.title}: управление выключено в настройках узла — включите «${vpnClient.title}» на экране «Разрешения»")
+        }
         val installed = runCatching { context.packageManager.getPackageInfo(target, 0) }.isSuccess
         if (!installed) error("приложение $target не установлено")
         if (kind == ru.uvw.dshnc.logic.IntentRequest.Kind.BROADCAST) {
