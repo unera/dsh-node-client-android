@@ -15,6 +15,26 @@ import org.json.JSONObject
  * API exists, and we will not pretend that it does.
  */
 class DeviceApi (private val context: Context) {
+    companion object {
+        /**
+         * Every method this API answers, written once.
+         *
+         * Three times now a new method reached the files dispatcher because the routing line in
+         * `NodeService` was a hand-written condition: the service and the API drifted, and the
+         * answer was `path_denied` for a method that has no path. The list lives next to the
+         * methods instead, and the dispatcher asks it.
+         */
+        val METHODS = setOf(
+            "alarm_next", "alarm_set", "alarm_dismiss", "device_status", "device_info",
+            "device_health", "camera_snap", "photos_latest", "apps",
+            "intent_query", "intent_start", "intent_open", "intent_broadcast", "intent_service",
+            "intent_edit", "components", "vpn", "vpn_bind",
+        )
+
+        /** @returns true when the method is one of ours — the dispatcher's only question. */
+        fun handles (method: String): Boolean = method in METHODS
+    }
+
     fun schema (): JSONObject = JSONObject()
         .put("name", "android")
         .put("version", NodeApi.VERSION)

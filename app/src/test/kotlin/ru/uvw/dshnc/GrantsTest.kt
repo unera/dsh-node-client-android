@@ -41,6 +41,17 @@ class GrantsTest {
     }
 
     @Test
+    fun `every method the api answers is routed to it`() {
+        // Three times a new method fell into the files dispatcher and answered path_denied.
+        // The list is the dispatcher's only question, so this test asks it of every method.
+        for (method in ru.uvw.dshnc.api.DeviceApi.METHODS) {
+            assertTrue("метод $method не маршрутизируется", ru.uvw.dshnc.api.DeviceApi.handles(method))
+        }
+        assertTrue(!ru.uvw.dshnc.api.DeviceApi.handles("read"))
+        assertTrue(!ru.uvw.dshnc.api.DeviceApi.handles("exec"))
+    }
+
+    @Test
     fun `a known vpn client is named, never described by a caller`() {
         // The list is the allow list: a caller names "v2raytun", and the node knows the package
         // and the receiver. "Some package, some action" is a broadcast primitive, not a VPN.

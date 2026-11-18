@@ -754,9 +754,7 @@ class NodeService : Service() {
                 method == "say" || method == "stop" || method == "caps" || method == "chat" || method == "activity" || method == "answer" || method == "record" || method == "play" -> voice.handle(method, args, seq, commandSeconds) { answer ->
                     submitResult(api, token, seq, answer)
                 }
-                method.startsWith("alarm_") || method == "apps" || method == "camera_snap" ||
-                    method == "photos_latest" || method.startsWith("device_") ||
-                    method.startsWith("intent_") || method == "components" -> device.handle(method, args, commandSeconds)
+                ru.uvw.dshnc.api.DeviceApi.handles(method) -> device.handle(method, args, commandSeconds)
                 method == "exec" -> shell.handle(method, args, seq, commandSeconds)
                 method == "copyToDevice" -> transfer.download(seq, args, commandSeconds)
                 method == "copyFromDevice" -> transfer.upload(seq, args, commandSeconds)
