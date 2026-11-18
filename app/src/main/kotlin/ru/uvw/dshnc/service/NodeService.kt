@@ -756,7 +756,7 @@ class NodeService : Service() {
                 }
                 method.startsWith("alarm_") || method == "apps" || method == "camera_snap" ||
                     method == "photos_latest" || method.startsWith("device_") ||
-                    method.startsWith("intent_") -> device.handle(method, args, commandSeconds)
+                    method.startsWith("intent_") || method == "components" -> device.handle(method, args, commandSeconds)
                 method == "exec" -> shell.handle(method, args, seq, commandSeconds)
                 method == "copyToDevice" -> transfer.download(seq, args, commandSeconds)
                 method == "copyFromDevice" -> transfer.upload(seq, args, commandSeconds)
