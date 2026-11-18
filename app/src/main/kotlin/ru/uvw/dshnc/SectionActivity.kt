@@ -186,44 +186,56 @@ class SectionActivity : AppCompatActivity() {
         }
     }
 
-    /** Drop the profile binding, keeping the client's switch. */
-    private fun askVpnUnbind (client: ru.uvw.dshnc.logic.VpnClient) {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setMessage("Забыть профиль ${client.title}? Переключатель останется, но переключать будет нечего.")
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton("Забыть") { _, _ ->
-                store.unbindVpn(client.type)
-                recreate()
-            }
-            .show()
-    }
-
     /**
-     * One known client: its switch, and what it is bound to.
+     * One known client: a switch and nothing else.
      *
-     * Tapping the line forgets the bound profile; the switch above it stays where it is. A row
-     * that reacts only sometimes is worse than a row that always explains itself.
+     * The command behind it is the client's own plugin protocol, learned once and kept by the
+     * node; the person's decision here is only whether this node may use it.
      */
-    private fun vpnRow (client: ru.uvw.dshnc.logic.VpnClient): android.view.View {
-        val allowed = store.grant(client.grantKey())
-        val profile = store.vpnProfile(client.type)
-        val guid = store.vpnGuid(client.type)
-        val row = Ui.itemEx(
-            this,
-            client.title,
-            if (!allowed) "выключено" else if (guid.isEmpty()) "профиль не снят" else "включено · $profile",
-            Ui.stateColor(allowed && guid.isNotEmpty()),
-            if (!allowed) {
-                "Выключено — включать и выключать ${client.title} с телефона нельзя"
-            } else if (guid.isEmpty()) {
-                "Разрешено, но профиль не снят: откройте ${client.title} в режиме захвата действия"
-            } else {
-                "Разрешено переключать профиль $profile. Нажмите, чтобы забыть профиль"
-            },
-            { if (guid.isNotEmpty()) askVpnUnbind(client) },
-        )
-        row.isClickable = true
-        return row
+    private fun vpnRow (client: ru.uvw.dshnc.logic.VpnClient): LinearLayout {
+        val density = resources.displayMetrics.density
+        var allowed = store.grant(client.grantKey())
+        val state = TextView(this).apply {
+            text = stateWord(allowed)
+            textSize = 15f
+            setTextColor(Ui.stateColor(allowed))
+            setPadding(0, (4 * density).toInt(), 0, 0)
+        }
+        val box = android.widget.CheckBox(this).apply {
+            isChecked = allowed
+            isClickable = false
+            isFocusable = false
+        }
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@SectionActivity).apply {
+                text = client.title
+                textSize = 18f
+                setTextColor(android.graphics.Color.WHITE)
+            })
+            addView(state)
+            addView(TextView(this@SectionActivity).apply {
+                text = "Выключено — включать и выключать ${client.title} с телефона нельзя"
+                textSize = 13f
+                setTextColor(android.graphics.Color.parseColor("#8b8b8b"))
+                setPadding(0, (6 * density).toInt(), 0, 0)
+            })
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding((20 * density).toInt(), (12 * density).toInt(), (20 * density).toInt(), (12 * density).toInt())
+            isClickable = true
+            addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(box)
+            setOnClickListener {
+                allowed = !allowed
+                store.setGrant(client.grantKey(), allowed)
+                box.isChecked = allowed
+                state.text = stateWord(allowed)
+                state.setTextColor(Ui.stateColor(allowed))
+            }
+        }
     }
 
     /** Forgetting is irreversible: the token cannot be restored, only a new code obtained. */
@@ -423,7 +435,7 @@ class SectionActivity : AppCompatActivity() {
             push(Ui.divider(this))
         }
 
-        push(Ui.item(this, "Известные VPN", "Каждый клиент переключается своей командой; профиль снимается захватом действия в самом клиенте", null))
+        push(Ui.item(this, "Известные VPN", "Клиенты, которые узел умеет включать и выключать своим запросом", null))
         push(Ui.divider(this))
         for (client in ru.uvw.dshnc.logic.VpnClient.KNOWN) {
             push(vpnRow(client))

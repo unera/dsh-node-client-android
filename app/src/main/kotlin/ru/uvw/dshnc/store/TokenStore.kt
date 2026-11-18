@@ -209,11 +209,6 @@ class TokenStore(private val context: Context) {
         write("vpn-$type-profile", profile.trim().ifBlank { null })
     }
 
-    /** Forget the profile, keeping the client's switch: a switch with nothing to switch is honest. */
-    fun unbindVpn (type: String) {
-        write("vpn-$type-guid", null)
-        write("vpn-$type-profile", null)
-    }
 
     /**
      * A newer instance of this node took the channel (`4001 replaced`) and this one stopped.
