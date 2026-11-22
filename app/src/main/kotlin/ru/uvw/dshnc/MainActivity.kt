@@ -345,6 +345,8 @@ class MainActivity : AppCompatActivity() {
                 if (token.isBlank()) throw IllegalStateException(getString(R.string.status_no_token))
                 store.base = base
                 store.token = token
+                // the name typed on the "Наименование" screen is the person's word about this
+                // phone: pairing is not a reason to put the model name back over it
                 store.name = deviceName()
                 store.enabled = true
                 // a fresh pairing is a person connecting this node: the old "displaced" mark
@@ -366,7 +368,12 @@ class MainActivity : AppCompatActivity() {
         return UUID.randomUUID().toString().also { store.deviceId = it }
     }
 
-    private fun deviceName (): String = Build.MODEL ?: "android"
+    /**
+     * The name this node goes by: what the person typed on the "Наименование" screen wins, the
+     * phone model is only the default. The name sent at pairing or enrollment is the local one —
+     * the server's copy changes only when the person presses "отправить на сервер".
+     */
+    private fun deviceName (): String = ru.uvw.dshnc.logic.Naming.localName(store.name, Build.MODEL)
 
     override fun onResume() {
         super.onResume()

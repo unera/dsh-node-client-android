@@ -59,6 +59,17 @@ class TokenStore(private val context: Context) {
         get() = read("name")
         set(value) = write("name", value)
 
+    /**
+     * The aliases this node answers to, as the phone keeps them.
+     *
+     * A local copy: editing it changes nothing on the server, and the exchange is the two
+     * buttons on the "Наименование" screen. The name is not stored here — it has its own key,
+     * and the server adds it to the alias list on its side.
+     */
+    var aliases: List<String>
+        get() = read("aliases")?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
+        set(value) = write("aliases", value.distinct().joinToString("\n").ifBlank { null })
+
     /** Permanent device identifier: the server recognises the node by it. */
     var deviceId: String?
         get() = read("uuid")
@@ -329,6 +340,7 @@ class TokenStore(private val context: Context) {
         val keepId = deviceId
         write("token", null)
         write("name", null)
+        write("aliases", null)
         write("enabled", null)
         // the request that was waiting for approval belongs to the connection being forgotten
         write("enroll", null)

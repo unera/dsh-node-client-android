@@ -141,6 +141,27 @@ class NodeApi(private val base: String) {
             .put("base", base)
     )
 
+    /**
+     * The name and aliases the server holds for this node.
+     *
+     * The phone keeps its own copy and changes it locally; this is the "download" direction,
+     * and it is pressed by a person, never done in the background: the local copy is somebody's
+     * work, and a silent overwrite is how it disappears.
+     */
+    fun naming (token: String): JSONObject = call("GET", "/v1/naming", token)
+
+    /**
+     * Replace the server's copy with the local one.
+     *
+     * The answer names the aliases another node already holds (`rejected`): those are not written,
+     * everything else is. A name held by another node is refused whole — a rename has no half.
+     */
+    fun setNaming (token: String, name: String, aliases: List<String>): JSONObject = call(
+        "PUT", "/v1/naming", token, JSONObject()
+            .put("name", name)
+            .put("aliases", JSONArray(aliases))
+    )
+
     /** A device event: a button press, readiness, anything. */
     fun sendEvent (token: String, body: JSONObject): JSONObject =
         call("POST", "/v1/events", token = token, body = body)

@@ -577,7 +577,7 @@ class NodeService : Service() {
             log("enroll: uuid нет — заявляться нечем, нужна ссылка из админки")
             return false
         }
-        val name = store.name ?: Build.MODEL ?: "android"
+        val name = ru.uvw.dshnc.logic.Naming.localName(store.name, Build.MODEL)
         val nonce = store.clientNonce()
         val api = NodeApi(base)
         store.enrollPending = true

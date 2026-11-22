@@ -829,7 +829,7 @@ class SectionActivity : AppCompatActivity() {
         status.text = getString(R.string.status_connecting)
         Thread {
             try {
-                val answer = ru.uvw.dshnc.api.NodeApi(base).pair(code, deviceId(), android.os.Build.MODEL ?: "android")
+                val answer = ru.uvw.dshnc.api.NodeApi(base).pair(code, deviceId(), ru.uvw.dshnc.logic.Naming.localName(store.name, android.os.Build.MODEL))
                 val token = answer.optString("token")
                 if (token.isBlank()) throw IllegalStateException(getString(R.string.status_no_token))
                 store.base = base

@@ -16,6 +16,10 @@ class MenuActivity : AppCompatActivity() {
         val root = Ui.screen(this, getString(R.string.menu_title)) { finish() }
 
         root.addView(Ui.group(this, getString(R.string.menu_group_node)))
+        root.addView(Ui.item(this, "Наименование", "Имя устройства и алиасы: скачать с сервера или отправить на него") {
+            startActivity(Intent(this, NamingActivity::class.java))
+        })
+        root.addView(Ui.divider(this))
         root.addView(Ui.item(this, getString(R.string.menu_auth), getString(R.string.menu_auth_sub)) { open("auth") })
         root.addView(Ui.divider(this))
         root.addView(Ui.item(this, getString(R.string.menu_net), getString(R.string.menu_net_sub)) { open("net") })
