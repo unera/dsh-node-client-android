@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,6 +44,7 @@ import ru.uvw.dshnc.logic.Commandno
 import ru.uvw.dshnc.logic.Generation
 import ru.uvw.dshnc.logic.Link
 import ru.uvw.dshnc.logic.Revival
+import ru.uvw.dshnc.logic.ServerName
 import ru.uvw.dshnc.store.NodeLog
 import ru.uvw.dshnc.store.TokenStore
 
@@ -157,6 +159,9 @@ class NodeService : Service() {
             startForeground(NOTIFICATION_ID, notification(getString(R.string.status_connecting)))
         }
         Heartbeat.schedule(this)
+        // the node is starting: the "off" row with its "Включить" has done its job, no matter
+        // who started the service — the shade button, the toggle in the app, or the alarm
+        Shade.dismissOff(this)
         val store = TokenStore(this)
         val base = store.base
         val token = store.token
@@ -203,6 +208,11 @@ class NodeService : Service() {
                 runningBase = base
                 run(base)
             } catch (error: Throwable) {
+                // "Выключить" cancels this coroutine, and the cancellation says "Job was
+                // cancelled" — that is the stop itself, not a broken network. Shown as an
+                // error it turned the stop into "Нет связи: Job was cancelled" over a row
+                // whose only button switches off again
+                if (error is CancellationException) throw error
                 // a background service must not fail silently: we write the reason into a
                 // file that can later be fetched through files
                 CrashLog.write(this@NodeService, error)
@@ -375,6 +385,8 @@ class NodeService : Service() {
                 notifyError(error.message)
                 delay(RECONNECT_MS)
             } catch (error: Throwable) {
+                // the loop was stopped on purpose: nothing is broken, so nothing is reported
+                if (error is CancellationException) throw error
                 runCatching { TokenStore(this@NodeService).addEvent("error", error.message ?: error.javaClass.simpleName) }
                 runCatching { TokenStore(this@NodeService).connected = false }
                 log("ошибка ${error.javaClass.simpleName}: ${error.message}")
@@ -616,6 +628,7 @@ class NodeService : Service() {
                 if (error.status == 404 || error.status == 409) attempt = 0
                 log("enroll ошибка ${error.status}/${error.code}: ${error.message}")
             } catch (error: Throwable) {
+                if (error is CancellationException) throw error
                 log("enroll ошибка ${error.javaClass.simpleName}: ${error.message}")
             }
             delay(waitForApproval(attempt))
@@ -891,9 +904,11 @@ class NodeService : Service() {
                 NotificationChannel(CHANNEL, getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW)
             )
         }
-        // the title is the node name, the state underneath it; next to it the turn-off
-        // button, so that one does not open the app just to "turn off"
-        val name = TokenStore(this).name ?: getString(R.string.app_name)
+        // the title is the server the node talks to, the state underneath it; next to it the
+        // turn-off button, so that one does not open the app just to "turn off". The device
+        // name used to be here, and it said nothing: two phones show the same word, while the
+        // address is the thing one actually wants to check at a glance
+        val name = ServerName.host(TokenStore(this).base) ?: getString(R.string.app_name)
         // a tap on the row brings the app's own window: the settings live there, and a
         // notification that does nothing when touched is only a decoration
         val open = android.app.PendingIntent.getActivity(

@@ -140,6 +140,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".service.StartReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".service.Heartbeat"
             android:exported="false" />
 

@@ -15,7 +15,10 @@ class StopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val store = TokenStore(context)
         store.enabled = false
+        store.addEvent("шторка", "выключено")
         NodeService.stop(context)
-        // the notification goes away together with the service — that is the confirmation
+        // the service's own row goes away with the service; in its place stands the "off" row,
+        // which is the way back on without opening the app
+        Shade.showOff(context)
     }
 }
