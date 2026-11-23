@@ -126,6 +126,7 @@ class NodeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        alive = true
         instance = this
         // the screen goes off — the system tries to put the network to sleep; a partial
         // lock keeps the process and the radio alive, otherwise the ping "disappears" for minutes
@@ -956,6 +957,7 @@ class NodeService : Service() {
     override fun onDestroy() {
         // a service that goes away must not leave the speaker busy
         runCatching { voice.shutdown() }
+        alive = false
         log("service onDestroy: channelOpen=$channelOpen, client_epoch=$clientEpoch")
         instance = null
         runCatching { wakeLock?.release() }
@@ -974,6 +976,15 @@ class NodeService : Service() {
          * instead of opening a second engine, so one voice queue serves the whole process.
          */
         @Volatile var voiceApi: VoiceApi? = null
+
+        /**
+         * Is the service instance alive right now?
+         *
+         * The settings say whether the node is *wanted* on; this says whether it is *actually*
+         * up. The tile needs the second one: a green tile over a dead service is worse than an
+         * honest grey one, because it stops the person from pressing it.
+         */
+        @Volatile var alive = false
 
         /** How many commands were executed: shown on the screen. */
         val executed = java.util.concurrent.atomic.AtomicLong()
