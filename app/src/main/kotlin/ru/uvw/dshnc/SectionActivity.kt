@@ -112,7 +112,14 @@ class SectionActivity : AppCompatActivity() {
             "handlers" -> buildHandlers(pad)
             else -> buildNet(pad)
         }
-        scroller = android.widget.ScrollView(this).apply { addView(root) }
+        // Фон у самой прокрутки, а не только у содержимого: корень — wrap_content, и на
+        // короткой секции ниже него просвечивал цвет темы. Плюс fillViewport, чтобы фон
+        // растягивался на весь экран, а не заканчивался там, где кончились строки.
+        scroller = android.widget.ScrollView(this).apply {
+            setBackgroundColor(android.graphics.Color.parseColor("#141414"))
+            isFillViewport = true
+            addView(root)
+        }
         setContentView(scroller)
         // a toggle rebuilds the screen (recreate); without this the person lands at the top and
         // has to find the switch again
