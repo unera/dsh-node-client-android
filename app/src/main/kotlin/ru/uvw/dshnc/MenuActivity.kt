@@ -3,6 +3,7 @@ package ru.uvw.dshnc
 import android.content.Intent
 import android.os.Bundle
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import androidx.appcompat.app.AppCompatActivity
 
 /**
@@ -33,8 +34,28 @@ class MenuActivity : AppCompatActivity() {
         root.addView(Ui.item(this, "Голосовой чат", "Режим записи, показ ответов, синтез") {
             startActivity(android.content.Intent(this, VoiceSettingsActivity::class.java))
         })
+        root.addView(Ui.divider(this))
+        root.addView(Ui.item(this, "Автоматическое обновление программы", updateSubtitle()) {
+            open("update")
+        })
 
-        setContentView(root)
+        // Прокрутка обязательна: пунктов уже больше, чем помещается на экран, и без неё нижние
+        // просто недостижимы — не «неудобно», а именно недоступны.
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(android.graphics.Color.parseColor("#141414"))
+            addView(root)
+        })
+    }
+
+    /** Что показать в меню про обновления: расписание, и не ждёт ли установки скачанное. */
+    private fun updateSubtitle (): String {
+        val pending = ru.uvw.dshnc.store.TokenStore(this).pendingUpdateVersion
+        if (pending != null) return "скачано $pending · ждёт установки"
+        val interval = ru.uvw.dshnc.logic.Updater.Interval.of(
+            ru.uvw.dshnc.store.TokenStore(this).updateInterval,
+        )
+        return if (interval == ru.uvw.dshnc.logic.Updater.Interval.NEVER) "проверка выключена"
+        else "проверять ${interval.label}"
     }
 
     private fun open (key: String) {

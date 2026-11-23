@@ -172,6 +172,49 @@ class TokenStore(private val context: Context) {
         (lastError?.let { "\nошибка: $it" } ?: "")
 
     /**
+     * Start the node by itself after the phone boots.
+     *
+     * Off by default, like every other way this app acts without being asked: a node that comes
+     * up on its own after a reboot is a surprise, and the person who wants it can say so once.
+     */
+    var autostart: Boolean
+        get() = read("autostart") == "1"
+        set(value) = write("autostart", if (value) "1" else null)
+
+    /** How often to look for a newer release on GitHub: the key of `Updater.Interval`. */
+    var updateInterval: String
+        get() = read("update-interval") ?: ru.uvw.dshnc.logic.Updater.Interval.DEFAULT.key
+        set(value) = write("update-interval", value)
+
+    /** When the app last asked GitHub, in milliseconds since epoch. */
+    var lastUpdateCheck: Long
+        get() = read("update-checked")?.toLongOrNull() ?: 0L
+        set(value) = write("update-checked", value.toString())
+
+    /** Downloaded and waiting for the person: version and file name. */
+    var pendingUpdateVersion: String?
+        get() = read("update-version")
+        set(value) = write("update-version", value)
+
+    var pendingUpdateFile: String?
+        get() = read("update-file")
+        set(value) = write("update-file", value)
+
+    /** Is it time to ask GitHub again? Never, when the person turned checking off. */
+    fun updateDue (now: Long = System.currentTimeMillis()): Boolean {
+        val interval = ru.uvw.dshnc.logic.Updater.Interval.of(updateInterval)
+        if (interval == ru.uvw.dshnc.logic.Updater.Interval.NEVER) return false
+        return now - lastUpdateCheck >= interval.hours * 3_600_000
+    }
+
+    /** The downloaded update, when the file is still where it was left. */
+    fun pendingUpdate (context: android.content.Context): java.io.File? {
+        val name = pendingUpdateFile ?: return null
+        val file = java.io.File(java.io.File(context.filesDir, "updates"), name)
+        return if (file.exists()) file else null
+    }
+
+    /**
      * The node was turned on by the person. Off means no network activity at all:
      * the service does not come up, the alarm does not wake anything, there are no
      * requests whatsoever.

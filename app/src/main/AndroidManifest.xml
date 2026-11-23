@@ -25,6 +25,8 @@
     <!-- без этого Android 11+ показывает только часть приложений, и найти
          нужное по имени пакета не получится -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- «запускать при старте»: без этого приёмник загрузки не получает ничего -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- без этого Android 11+ не находит системные часы по интенту -->
     <queries>
@@ -146,6 +148,14 @@
         <receiver
             android:name=".service.Heartbeat"
             android:exported="false" />
+
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".service.NodeService"

@@ -38,6 +38,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var details: TextView
     private lateinit var linkRow: LinearLayout
     private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Один запрос к GitHub за одно открытие экрана, и один вопрос об установке. */
+    private var updateCheckStarted = false
+    private var updateAsked = false
 
     /** The scan result: the contents of the QR code — the same link as from the admin panel. */
     private val scanner = registerForActivityResult(
@@ -306,6 +309,64 @@ class MainActivity : AppCompatActivity() {
         }, 1000)
     }
 
+    /**
+     * Ask whether to install the update that is already downloaded.
+     *
+     * The question returns on every visit to this screen until it is answered with «Установить»:
+     * an update that was downloaded and then forgotten is how a phone stays on an old version.
+     */
+    private fun askInstallUpdate () {
+        if (updateAsked) return
+        val file = store.pendingUpdate(this) ?: run {
+            // файл пропал (почистили данные, удалили вручную) — не обещаем то, чего нет
+            if (store.pendingUpdateFile != null) {
+                store.pendingUpdateVersion = null
+                store.pendingUpdateFile = null
+            }
+            return
+        }
+        if (isFinishing || isDestroyed) return
+        val version = store.pendingUpdateVersion ?: return
+        if (!ru.uvw.dshnc.logic.Updater.newer(version, ru.uvw.dshnc.logic.Updater.currentVersion(this))) {
+            // обновление уже установлено: вопрос больше не про что
+            store.pendingUpdateVersion = null
+            store.pendingUpdateFile = null
+            return
+        }
+        updateAsked = true
+        UpdateUi.offerInstall(
+            this, version, file,
+            onDecline = { status.text = "обновление $version ждёт: спрошу при следующем входе" },
+            onStarted = { store.pendingUpdateVersion = null; store.pendingUpdateFile = null },
+        )
+    }
+
+    /**
+     * Look for a newer release by the schedule from the settings, in the background.
+     *
+     * Nothing is said while it runs: a check that fails (no network, GitHub down) is not news, and
+     * saying it on every launch would train the person to ignore this screen. A downloaded
+     * update, on the other hand, does speak.
+     */
+    private fun lookForUpdate () {
+        if (updateCheckStarted) return
+        updateCheckStarted = true
+        if (!store.updateDue()) return
+        if (store.pendingUpdate(this) != null) return
+        store.lastUpdateCheck = System.currentTimeMillis()
+        Thread {
+            val outcome = ru.uvw.dshnc.logic.Updater.checkAndDownload(this)
+            val version = outcome.version ?: return@Thread
+            val file = outcome.file ?: return@Thread
+            store.pendingUpdateVersion = version
+            store.pendingUpdateFile = file.name
+            runOnUiThread {
+                updateAsked = false
+                askInstallUpdate()
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
     /** Camera: the permission is requested at the moment of the press. */
     private fun startScanner () {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -381,6 +442,11 @@ class MainActivity : AppCompatActivity() {
         // toggle; the watchman starts it when the loop is not running at all, and the screen
         // brings the scanner back when there is no token to knock with. `render()` does both.
         render()
+        // скачанное обновление спрашивается при каждом входе: «Позже» откладывает вопрос, а не
+        // отменяет его — иначе телефон quietly остаётся на старой версии месяцами
+        updateAsked = false
+        askInstallUpdate()
+        lookForUpdate()
     }
 
     override fun onPause() {

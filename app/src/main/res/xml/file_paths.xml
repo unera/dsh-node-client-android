@@ -7,4 +7,6 @@
 -->
 <paths>
     <external-path name="dsh" path="DSH/" />
+    <!-- скачанные обновления: установщик получает файл как content:// из этой папки -->
+    <files-path name="updates" path="updates/" />
 </paths>

@@ -87,6 +87,7 @@ class SectionActivity : AppCompatActivity() {
             "intents" -> "Запуск приложений"
             "perm" -> "Интеграция с андроид"
             "grants" -> "Разрешения"
+            "update" -> "Автоматическое обновление программы"
             else -> getString(R.string.menu_net)
         }
         // the same screen and the same style as the menu: the third level must not
@@ -106,6 +107,7 @@ class SectionActivity : AppCompatActivity() {
             "intents" -> buildIntents(pad)
             "perm" -> buildPermissions(pad)
             "grants" -> buildGrants(pad)
+            "update" -> buildUpdate(pad)
             "apps_pick" -> buildAppPicker(pad)
             "handlers" -> buildHandlers(pad)
             else -> buildNet(pad)
@@ -453,6 +455,16 @@ class SectionActivity : AppCompatActivity() {
         push(Ui.item(this, "Что это", "Здесь можно ограничить перечень действий, доступных DSH по управлению данным устройством", null))
         push(Ui.divider(this))
 
+        // Первым: самое частое желание после установки — чтобы узел возвращался сам, а не
+        // после каждого ребута ждать, пока кто-нибудь откроет приложение.
+        push(switchRow(
+            "Автоматически запускать при старте",
+            store.autostart,
+            "Включено — после загрузки телефона узел поднимется сам, если он был включён. " +
+                "Выключено — после ребута нужно открыть приложение или нажать «Включить» в шторке",
+        ) { on -> store.autostart = on })
+        push(Ui.divider(this))
+
         for (grant in ru.uvw.dshnc.logic.Grants.Grant.entries) {
             push(grantRow(grant))
             push(Ui.divider(this))
@@ -787,6 +799,176 @@ class SectionActivity : AppCompatActivity() {
             push(Ui.item(this, info.loadLabel(packageManager).toString(), info.activityInfo.packageName, null))
         }
         push(status)
+    }
+
+    /**
+     * «Автоматическое обновление программы»: расписание, ручная проверка, установка, разрешение.
+     *
+     * One screen for one story: how often to look, what came back, what to do with it, and what
+     * Android must allow for the last step.
+     */
+    private fun buildUpdate (pad: Int) {
+        val interval = ru.uvw.dshnc.logic.Updater.Interval.of(store.updateInterval)
+        push(Ui.itemEx(
+            this,
+            "Проверять обновления",
+            interval.label,
+            Ui.stateColor(interval != ru.uvw.dshnc.logic.Updater.Interval.NEVER),
+            updateDetail(interval),
+            {
+                val options = ru.uvw.dshnc.logic.Updater.Interval.entries.map { it.label }.toTypedArray()
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Проверять обновления")
+                    .setSingleChoiceItems(
+                        options,
+                        ru.uvw.dshnc.logic.Updater.Interval.entries.indexOf(interval),
+                    ) { dialog, which ->
+                        store.updateInterval =
+                            ru.uvw.dshnc.logic.Updater.Interval.entries[which].key
+                        dialog.dismiss()
+                        recreate()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            },
+        ))
+        push(Ui.divider(this))
+
+        // Проверка руками: то же, что делает запуск, но по нажатию и с ответом на экране
+        push(Ui.button(this, "Проверить обновления") { checkNow() })
+
+        val pendingVersion = store.pendingUpdateVersion
+        val pendingFile = store.pendingUpdate(this)
+        if (pendingFile != null && pendingVersion != null &&
+            ru.uvw.dshnc.logic.Updater.newer(pendingVersion, ru.uvw.dshnc.logic.Updater.currentVersion(this))
+        ) {
+            push(Ui.button(this, "Установить обновление $pendingVersion") {
+                UpdateUi.install(this, pendingFile) {
+                    store.pendingUpdateVersion = null
+                    store.pendingUpdateFile = null
+                }
+            })
+        }
+
+        push(status)
+
+        // Разрешение — последний шаг той же истории: без него установка упирается в системный
+        // экран, и узнать об этом лучше здесь, а не в момент обновления.
+        val canInstall = ru.uvw.dshnc.logic.Updater.canInstall(this)
+        push(Ui.itemEx(
+            this,
+            "Установка приложений",
+            if (canInstall) "разрешено" else "запрещено",
+            Ui.stateColor(canInstall),
+            "Разрешение Android: без него приложение не может предложить скачанный APK установщику. " +
+                "Нажмите, чтобы открыть системный экран",
+            { openInstallSettings() },
+        ))
+        push(Ui.divider(this))
+        push(Ui.item(
+            this,
+            "Установить вручную",
+            "Скачанный файл лежит в папке приложения; установить его можно и через API узла",
+            null,
+        ))
+    }
+
+    /** Когда проверяли в прошлый раз — и не ждёт ли установки скачанное. */
+    private fun updateDetail (interval: ru.uvw.dshnc.logic.Updater.Interval): String {
+        if (interval == ru.uvw.dshnc.logic.Updater.Interval.NEVER) return "Проверка выключена"
+        val last = store.lastUpdateCheck
+        if (last == 0L) return "Ещё не проверяли"
+        val minutes = (System.currentTimeMillis() - last) / 60_000
+        val ago = when {
+            minutes < 1 -> "только что"
+            minutes < 60 -> "$minutes мин назад"
+            minutes < 60 * 24 -> "${minutes / 60} ч назад"
+            else -> "${minutes / (60 * 24)} дн назад"
+        }
+        val pending = store.pendingUpdateVersion
+        return if (pending != null) "Последняя проверка: $ago · скачано $pending, ждёт установки"
+        else "Последняя проверка: $ago"
+    }
+
+    /** Один запрос к GitHub по нажатию: скачать и сразу предложить установку. */
+    private fun checkNow () {
+        status.text = "проверяю…"
+        Thread {
+            val outcome = ru.uvw.dshnc.logic.Updater.checkAndDownload(this)
+            runOnUiThread {
+                val file = outcome.file
+                val version = outcome.version
+                if (file == null || version == null) {
+                    status.text = outcome.text
+                    return@runOnUiThread
+                }
+                store.pendingUpdateVersion = version
+                store.pendingUpdateFile = file.name
+                status.text = "скачано $version"
+                // Отказ здесь не отменяет обновление: файл остаётся, и главный экран спросит
+                // сам — ровно так, как если бы версию нашла фоновая проверка.
+                UpdateUi.offerInstall(
+                    this, version, file,
+                    onDecline = { status.text = "обновление $version ждёт: спрошу на главном экране" },
+                    onStarted = {
+                        store.pendingUpdateVersion = null
+                        store.pendingUpdateFile = null
+                    },
+                )
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    /**
+     * A switch row: a title, the state, an explanation, and a checkbox.
+     *
+     * The same shape as the grant rows, and for the same reason: the row owns the tap and the
+     * screen is not rebuilt, so a flick does not move what the person was reading.
+     */
+    private fun switchRow (title: String, on: Boolean, help: String, set: (Boolean) -> Unit): LinearLayout {
+        val density = resources.displayMetrics.density
+        var current = on
+        val state = TextView(this).apply {
+            text = stateWord(current)
+            textSize = 15f
+            setTextColor(Ui.stateColor(current))
+            setPadding(0, (4 * density).toInt(), 0, 0)
+        }
+        val box = android.widget.CheckBox(this).apply {
+            isChecked = current
+            isClickable = false
+            isFocusable = false
+        }
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@SectionActivity).apply {
+                text = title
+                textSize = 18f
+                setTextColor(android.graphics.Color.WHITE)
+            })
+            addView(state)
+            addView(TextView(this@SectionActivity).apply {
+                text = help
+                textSize = 13f
+                setTextColor(android.graphics.Color.parseColor("#8b8b8b"))
+                setPadding(0, (6 * density).toInt(), 0, 0)
+            })
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding((20 * density).toInt(), (12 * density).toInt(), (20 * density).toInt(), (12 * density).toInt())
+            isClickable = true
+            addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(box)
+            setOnClickListener {
+                current = !current
+                box.isChecked = current
+                state.text = stateWord(current)
+                state.setTextColor(Ui.stateColor(current))
+                set(current)
+            }
+        }
     }
 
     private fun push (view: android.view.View) {
